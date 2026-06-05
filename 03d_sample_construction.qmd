@@ -1,0 +1,280 @@
+---
+title: "Stage 3d: Sample construction – Model A and Model B (agency-city)"
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Build the Model A and Model B analytical samples at the agency-city
+#           level (HQ-anchored / restricted / extended-coverage variants).
+# Inputs  : data/cleaned/recalls_clean.rds
+#           data/cleaned/ntd_transit.rds
+#           data/cleaned/roster_ntd.rds  (city_id, ntd_id, match flags)
+# Outputs : data/cleaned/sample_modelA_pairs.rds  (one row per qualifying pair)
+#           data/cleaned/sample_modelB_pairs.rds
+# =============================================================================
+```
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(here)
+here::i_am("_quarto.yml")
+
+recalls <- readRDS(here("data", "cleaned", "recalls_clean.rds"))
+ntd     <- readRDS(here("data", "cleaned", "ntd_transit.rds"))
+ntd_ros <- readRDS(here("data", "cleaned", "roster_ntd.rds")) |>
+  mutate(match_via_rest = match_via_hq &
+                          (match_via_sa_place | match_via_sa_county))
+
+WINDOW <- 2014:2024
+
+# Pre-aggregate NTD to (agency, year), restricted to positive capital obs.
+ntd_obs <- ntd |>
+  filter(!is.na(total_capital_usd), total_capital_usd > 0,
+         year %in% WINDOW) |>
+  distinct(ntd_id, year)
+
+cat("NTD agency-year obs in window:", nrow(ntd_obs), "across",
+    n_distinct(ntd_obs$ntd_id), "agencies\n")
+cat("Roster pairs:", nrow(ntd_ros),
+    "(", n_distinct(ntd_ros$city_id), "cities,",
+    n_distinct(ntd_ros$ntd_id), "agencies)\n")
+```
+
+## Universe
+
+```{r}
+#| label: universe
+universe_events  <- recalls
+universe_cities  <- recalls |> distinct(city_id)
+
+cat("=== UNIVERSE (recall-active cities, 2014-2024) ===\n")
+cat("Petition events:", nrow(universe_events), "\n")
+cat("Unique cities:  ", nrow(universe_cities), "\n")
+```
+
+## Model A – successful recall as treatment
+
+```{r}
+#| label: model-A-treated-cities
+# Treatment: Removed | Resigned
+A2_events <- universe_events |>
+  filter(any_removed | any_resigned) |>
+  mutate(outcome_cat = case_when(
+    any_removed  ~ "Removed",
+    any_resigned ~ "Resigned"
+  ))
+A2_cities <- A2_events |> distinct(city_id)
+
+# Anchor year for each treated city (first successful recall, for cities w/ multiple)
+treat_anchor <- A2_events |>
+  group_by(city_id) |>
+  summarise(treat_year = min(filing_year), .groups = "drop")
+
+cat("Successful-recall (treated) cities:", nrow(A2_cities), "\n")
+```
+
+```{r}
+#| label: model-A-pair-classification
+# Build full set of (treated city, matched agency) pairs, with agency NTD coverage.
+# Then check the pre/post requirement per (matching tier, city).
+
+# All treated city -> agency pairs (any match method) with each agency's
+# NTD coverage years.
+pair_cov <- treat_anchor |>
+  inner_join(ntd_ros, by = "city_id", relationship = "many-to-many") |>
+  left_join(ntd_obs, by = "ntd_id", relationship = "many-to-many")
+
+# Per city, aggregate pre/post obs counts for each matching tier in a single pass.
+# Tiers are nested: rest ⊆ hq ⊆ ext. Qualifying = >=1 pre and >=1 post obs.
+city_cov <- pair_cov |>
+  filter(!is.na(year)) |>
+  group_by(city_id, treat_year) |>
+  summarise(n_pre_hq    = sum(year <  treat_year & match_via_hq),
+            n_post_hq   = sum(year >= treat_year & match_via_hq),
+            n_pre_rest  = sum(year <  treat_year & match_via_rest),
+            n_post_rest = sum(year >= treat_year & match_via_rest),
+            n_pre_ext   = sum(year <  treat_year),
+            n_post_ext  = sum(year >= treat_year),
+            .groups = "drop")
+
+A_treated_hq   <- city_cov |> filter(n_pre_hq   >= 1, n_post_hq   >= 1) |> pull(city_id)
+A_treated_rest <- city_cov |> filter(n_pre_rest >= 1, n_post_rest >= 1) |> pull(city_id)
+A_treated_ext  <- city_cov |> filter(n_pre_ext  >= 1, n_post_ext  >= 1) |> pull(city_id)
+
+cat("Treated cities qualifying under HQ-anchored pre/post:    ", length(A_treated_hq), "\n")
+cat("Treated cities qualifying under restricted pre/post:     ", length(A_treated_rest), "\n")
+cat("Treated cities qualifying under extended-coverage pre/post:", length(A_treated_ext), "\n")
+```
+
+```{r}
+#| label: model-A-control-pool
+# Control pool = recall-active cities WITHOUT a successful recall, that have any
+# matched agency with any obs in the window.
+ctrl_universe <- universe_cities |> anti_join(A2_cities, by = "city_id")
+
+# Per (city, tier), does any matched agency have any obs in the window?
+ctrl_cov <- ctrl_universe |>
+  inner_join(ntd_ros, by = "city_id", relationship = "many-to-many") |>
+  inner_join(ntd_obs, by = "ntd_id", relationship = "many-to-many")
+
+A_control_hq   <- ctrl_cov |> filter(match_via_hq)   |> distinct(city_id) |> pull(city_id)
+A_control_rest <- ctrl_cov |> filter(match_via_rest) |> distinct(city_id) |> pull(city_id)
+A_control_ext  <- ctrl_cov |> distinct(city_id) |> pull(city_id)
+
+cat("Control cities qualifying under HQ-anchored tier:    ", length(A_control_hq), "\n")
+cat("Control cities qualifying under restricted tier:     ", length(A_control_rest), "\n")
+cat("Control cities qualifying under extended-coverage tier:", length(A_control_ext), "\n")
+```
+
+```{r}
+#| label: model-A-pairs-build
+# Build the (city, agency) pair table for Model A.
+# A pair is in_modelA_hq if:
+#   (a) the agency's match_via_hq is TRUE for that city, AND
+#   (b) the city is in A_treated_hq OR A_control_hq
+# A pair is in_modelA_ext if:
+#   (a) the pair is in the roster (any match method), AND
+#   (b) the city is in A_treated_ext OR A_control_ext
+
+A_pairs <- ntd_ros |>
+  semi_join(bind_rows(A2_cities, ctrl_universe), by = "city_id") |>
+  mutate(
+    group_A = case_when(
+      city_id %in% A2_cities$city_id ~ "treated",
+      TRUE                            ~ "control"
+    ),
+    in_modelA_hq = match_via_hq &
+      ((group_A == "treated" & city_id %in% A_treated_hq) |
+       (group_A == "control" & city_id %in% A_control_hq)),
+    in_modelA_rest = match_via_rest &
+      ((group_A == "treated" & city_id %in% A_treated_rest) |
+       (group_A == "control" & city_id %in% A_control_rest)),
+    in_modelA_ext =
+      ((group_A == "treated" & city_id %in% A_treated_ext) |
+       (group_A == "control" & city_id %in% A_control_ext))
+  )
+
+stopifnot(all(A_pairs$in_modelA_hq   <= A_pairs$match_via_hq))
+stopifnot(all(A_pairs$in_modelA_rest <= A_pairs$match_via_rest))
+stopifnot(all(A_pairs$in_modelA_rest <= A_pairs$in_modelA_hq))
+
+cat("\n=== MODEL A PAIRS ===\n")
+cat("Roster pairs touching Model A universe:", nrow(A_pairs), "\n")
+for (flag in c("in_modelA_hq", "in_modelA_rest", "in_modelA_ext")) {
+  cat(sprintf("  %-16s pairs: %d  (treated=%d, control=%d)\n",
+              flag, sum(A_pairs[[flag]]),
+              sum(A_pairs[[flag]] & A_pairs$group_A == "treated"),
+              sum(A_pairs[[flag]] & A_pairs$group_A == "control")))
+}
+
+cat("\nDistinct cities by sample:\n")
+for (flag in c("in_modelA_hq", "in_modelA_rest", "in_modelA_ext")) {
+  cat(sprintf("  %-16s treated=%d  control=%d\n", flag,
+              n_distinct(A_pairs$city_id[A_pairs[[flag]] & A_pairs$group_A == "treated"]),
+              n_distinct(A_pairs$city_id[A_pairs[[flag]] & A_pairs$group_A == "control"])))
+}
+```
+
+## Model B – petition filing as treatment
+
+```{r}
+#| label: model-B-pair-classification
+# Petition timing per city
+city_petitions <- universe_events |>
+  group_by(city_id) |>
+  summarise(first_pet = min(filing_year),
+            last_pet  = max(filing_year),
+            .groups = "drop")
+
+# (city, agency) coverage relative to petition windows, by matching tier
+B_pair_cov <- city_petitions |>
+  inner_join(ntd_ros, by = "city_id", relationship = "many-to-many") |>
+  left_join(ntd_obs,  by = "ntd_id", relationship = "many-to-many")
+
+B_city_cov <- B_pair_cov |>
+  filter(!is.na(year)) |>
+  group_by(city_id, first_pet, last_pet) |>
+  summarise(n_pre_hq    = sum(year <  first_pet & match_via_hq),
+            n_post_hq   = sum(year >= last_pet  & match_via_hq),
+            n_pre_rest  = sum(year <  first_pet & match_via_rest),
+            n_post_rest = sum(year >= last_pet  & match_via_rest),
+            n_pre_ext   = sum(year <  first_pet),
+            n_post_ext  = sum(year >= last_pet),
+            .groups = "drop")
+
+B_cities_hq   <- B_city_cov |> filter(n_pre_hq   >= 1, n_post_hq   >= 1) |> pull(city_id)
+B_cities_rest <- B_city_cov |> filter(n_pre_rest >= 1, n_post_rest >= 1) |> pull(city_id)
+B_cities_ext  <- B_city_cov |> filter(n_pre_ext  >= 1, n_post_ext  >= 1) |> pull(city_id)
+
+cat("Model B cities qualifying under HQ-anchored tier:    ", length(B_cities_hq), "\n")
+cat("Model B cities qualifying under restricted tier:     ", length(B_cities_rest), "\n")
+cat("Model B cities qualifying under extended-coverage tier:", length(B_cities_ext), "\n")
+```
+
+```{r}
+#| label: model-B-pairs-build
+B_pairs <- ntd_ros |>
+  semi_join(universe_cities, by = "city_id") |>
+  mutate(
+    in_modelB_hq   = match_via_hq   & city_id %in% B_cities_hq,
+    in_modelB_rest = match_via_rest & city_id %in% B_cities_rest,
+    in_modelB_ext  = city_id %in% B_cities_ext
+  )
+
+stopifnot(all(B_pairs$in_modelB_hq   <= B_pairs$match_via_hq))
+stopifnot(all(B_pairs$in_modelB_rest <= B_pairs$match_via_rest))
+stopifnot(all(B_pairs$in_modelB_rest <= B_pairs$in_modelB_hq))
+
+cat("\n=== MODEL B PAIRS ===\n")
+for (flag in c("in_modelB_hq", "in_modelB_rest", "in_modelB_ext")) {
+  cat(sprintf("  %-16s pairs: %d  (%d cities)\n",
+              flag, sum(B_pairs[[flag]]),
+              n_distinct(B_pairs$city_id[B_pairs[[flag]]])))
+}
+```
+
+## Save artifacts
+
+```{r}
+#| label: save
+# Add city-level attributes to carry into the panel.
+A_pairs_save <- A_pairs |>
+  left_join(treat_anchor |> rename(first_success_year = treat_year),
+            by = "city_id") |>
+  left_join(A2_events |> distinct(city_id, outcome_cat) |>
+              group_by(city_id) |>
+              summarise(outcome_cat = paste(sort(unique(outcome_cat)), collapse=";"),
+                        .groups="drop"),
+            by = "city_id")
+
+saveRDS(A_pairs_save, here("data", "cleaned", "sample_modelA_pairs.rds"))
+saveRDS(B_pairs,      here("data", "cleaned", "sample_modelB_pairs.rds"))
+
+cat("Saved sample artifacts:\n")
+cat("  sample_modelA_pairs.rds:", nrow(A_pairs_save), "pairs\n")
+cat("  sample_modelB_pairs.rds:", nrow(B_pairs), "pairs\n")
+```
+
+## Exit criteria
+
+```{r}
+#| label: exit
+n_treated_hq   <- n_distinct(A_pairs$city_id[A_pairs$in_modelA_hq   & A_pairs$group_A == "treated"])
+n_control_hq   <- n_distinct(A_pairs$city_id[A_pairs$in_modelA_hq   & A_pairs$group_A == "control"])
+n_treated_rest <- n_distinct(A_pairs$city_id[A_pairs$in_modelA_rest & A_pairs$group_A == "treated"])
+n_control_rest <- n_distinct(A_pairs$city_id[A_pairs$in_modelA_rest & A_pairs$group_A == "control"])
+n_B_hq         <- n_distinct(B_pairs$city_id[B_pairs$in_modelB_hq])
+n_B_rest       <- n_distinct(B_pairs$city_id[B_pairs$in_modelB_rest])
+
+cat(sprintf("- Model A HQ treated >=5 and HQ control >=20:    %s (%d, %d)\n",
+            n_treated_hq >= 5 && n_control_hq >= 20, n_treated_hq, n_control_hq))
+cat(sprintf("- Model A restricted treated >=1 and control >=1: %s (%d, %d)\n",
+            n_treated_rest >= 1 && n_control_rest >= 1, n_treated_rest, n_control_rest))
+cat(sprintf("- Model B HQ pre/post-observable >=30:           %s (%d)\n",
+            n_B_hq >= 30, n_B_hq))
+cat(sprintf("- Model B restricted pre/post-observable >=10:   %s (%d)\n",
+            n_B_rest >= 10, n_B_rest))
+```

@@ -1,0 +1,735 @@
+---
+format:
+  pdf:
+    documentclass: article
+    fontsize: 12pt
+    geometry: margin=1in
+    number-sections: true
+    toc: false
+    colorlinks: true
+    linkcolor: black
+    urlcolor: blue
+    toccolor: black
+    keep-tex: false
+    fig-pos: 'ht'
+    include-in-header: _preamble.tex
+    include-before-body: _frontmatter.tex
+---
+
+# Introduction
+
+In June 1990, New Jersey Governor Jim Florio signed a \$2.8 billion tax package, the largest in state history at the time, partly to fund improvements to the state’s education system. The resulting grassroots revolt saw Florio's approval ratings plummet to 18% and eventually forced the state to adopt its current recall system in 1993 (Avery). This historical episode illustrates a fundamental tension in politics: expensive investments in long-term public services often create immediate political risks that can end an official's career.
+
+As with education, investments in public transit take time to bear results, while asking the public to bear their cost up front. The recall heightens the political danger of this timing mismatch. By letting citizens remove a leader between elections, recalls make it more difficult for politicians to absorb the early backlash over a project's cost and remain in office long enough for its benefits (and the prestige they bring) to arrive. The mismatch between transit's immediate costs and its delayed benefits, something an official may otherwise have outlasted, can now end a career. If the threat of removal via recall steers officials away from making long-term investments, an institutional tool meant to empower voters may instead leave cities underinvesting in the infrastructure they need.
+
+This thesis tests whether recall activity reduces municipal transit capital spending, drawing on American cities that saw at least one mayoral recall attempt between 2014 and 2024, looking at both the successful removal of a mayor and the filing of a recall petition. The analysis finds two patterns: successful recalls are followed by reductions in transit capital spending (though the estimate rests on a small sample and shows significant pre-treatment trends), and the filing of a recall petition is associated with an increase in transit capital spending in the same year.
+
+
+```{=latex}
+\addtolength{\textheight}{1\baselineskip}
+```
+
+# Literature Review
+
+Besley and Case (1995) demonstrated how elections change the behavior of leaders by studying variation in US gubernatorial term limits. They found that incumbents who are eligible for reelection (thus facing the judgment of the voters) tend to spend less and keep taxes lower than those in their final term. A paper by Alt, Bueno de Mesquita, and Rose (2011) expanded on this, showing that voters use elections to select competent leaders, but that the immediate pressure of an upcoming vote can lead to fiscal restraint to avoid voter anger. This suggests that the shadow of the ballot box creates a constant pressure for fiscal restraint.
+
+And on the topic of ballot-box pressure: a paper by Pulejo and Querubín (2021) used variation in election timing and term-limit rules during the COVID-19 pandemic to show that leaders facing imminent elections avoid policies with high short-term costs and long-term benefits. Their findings underscore how electoral pressure can discourage politically costly investments, a mechanism directly relevant to municipal transit expenditures.
+
+For recall elections, Holland and Incio (2019) utilized "selectorate theory" to analyze local-level recalls in Peru. They found that when a recall petition is launched, mayors shift their spending toward "private goods" (targeted favors for their supporters) to try and stay in office. They only increased spending on "public goods" like infrastructure if a full recall election was actually triggered. However, Peru’s dynamics might not directly translate to American municipal politics: Peru has a multi-party system where recalls are often used as a power-grab by losing candidates hoping to trigger new elections (and oust the incumbent).
+
+This thesis differentiates itself by examining how recall threats affect long-term capital investment in US municipalities. This is more specific than broader electoral pressures, while focusing on US municipalities and transit. To address selection bias, the analysis is restricted to “recall-active” cities – municipalities that experienced at least one recall attempt during the selected timeframe. This design means that both the treatment and control groups share a same baseline level of political "friction." By keeping the analysis within this specific population, this approach reduces the bias inherent in comparing stable cities to unstable ones.
+
+# Theoretical Argument and Hypotheses
+
+The argument of this thesis is that recall activity inhibits transit spending by incentivizing politicians to prioritize short-term spending over long-term investments. Capital spending on transit[^1] imposes a visible cost on voters immediately, through tax increases or debt issuance. But its benefits can take years to arrive, materializing only once the project itself is completed. This timing mismatch creates a hostile short-term political environment that an official must survive before any payoff appears.
+
+Without a recall mechanism in place, an incumbent could launch the project, ride out the early backlash without it threatening their job, and reap the credit when the project is delivered (provided it is delivered within their term). Consider the rollout of congestion pricing in New York, which initially drew major backlash from residents and drivers frustrated by the highly visible new charge it imposed. Over time, that hostility morphed into support as those same drivers enjoyed faster commutes and lighter traffic.
+
+A recall changes that calculus, by exposing the official to removal during the window when costs are most salient and benefits have yet to appear. Looking again at New York’s congestion pricing, a majority of state voters polled opposed the policy on the eve of implementation (Siena Research Institute). Governor Kathy Hochul could absorb that opposition because she had nearly two years before she would face voters, and because New York has no recall option for its governor[^2]. A mayor of a municipality that allows recalls has no such fixed horizon: voters can force a reckoning at any moment, well before a long-term project has the chance to vindicate itself.
+
+By stripping away the buffer that lets an official outlast this timing mismatch, recall pressure can affect spending behavior in two ways. The first is by spooking successors into austerity. Following a successful removal or resignation, a successor may signal fiscal discipline to distance themselves from the perceived "mismanagement" that triggered their predecessor’s recall. The second is through preemptive austerity, where the mere filing of a recall petition signals a credible career threat. This prompts an incumbent to cut back on capital spending to avoid "tax-and-spend" labels during the petition phase.
+
+Formally, there are two hypotheses stemming from these mechanisms. One, a successful recall is followed by a sustained decline in transit capital spending in the years afterward, as a cautious successor retreats from long-term commitments. This is the successor-austerity mechanism in action, tested by Model A. Two, the filing of a mayoral recall petition is associated with an immediate, short-term decrease in municipal transit capital spending, regardless of whether the recall ultimately succeeds. This is the preemptive-austerity mechanism, tested by Model B. Because transit projects involve visible short-term costs and delayed benefits, they can be an appealing target for officials seeking to signal restraint.
+
+Both mechanisms could be muted through various channels. Capital spending is often locked through dedicated local taxes, long-term capital plans, or independent transit authorities that limit mayoral discretion over short-term investment decisions. Many major transit agencies, like NJ Transit and New York’s MTA, are controlled by their respective states, insulating them from short-term local politics. When a mayor cannot easily influence an agency’s capital budget, recall pressure may alter political incentives without translating into observable changes in transit spending. Lastly, the underlying assumption that recalls pose a credible threat may not hold. Most recall attempts fail and many petitions never even reach the ballot. As a result, politicians might simply feel unworried in the face of a recall, and see no reason to change their behavior.
+
+Recall pressure could also push spending in the opposite direction. Instead of retreating, incumbents may accelerate transit spending. Ribbon cuttings, ground-breaking ceremonies, and service expansions can signal competence, deliver visible public goods, and energize supporters. If so, recalls reward investment rather than encourage restraint, as an official under threat of removal races to show results. Alternatively, state or federal officials might intervene to protect politically aligned mayors by directing funds or fast-tracking projects, helping their ally deliver tangible benefits and survive the challenge. Here too, recall pressure would encourage more transit spending, instead of fiscal restraint.
+
+There are potential alternative explanations to recalls affecting transit spending. Fiscal crises and local economic cycles, for example, could turn voters against elected officials and make recalls more likely, while forcing the local government to reduce spending (including transit spending). Local economic cycles are controlled for using unemployment data from the Bureau of Labor Statistics, although this involves using county data rather than more precise town data (BLS only covers towns with populations above 25,000). Another confounder could be population density (which is ultimately controlled for using Census data). More urban areas might simply have more opportunities for corruption or other behavior that leads to recalls, while also being better suited for public transit.
+
+
+```{=latex}
+\addtolength{\textheight}{-1\baselineskip}
+```
+
+# Research Design
+
+The unit of analysis is the agency-city-year – one row per recall-active city, per National Transit Database (NTD) agency belonging to it, per year from 2014 to 2024\. Mayors and city councils serve as the "CEOs" of municipal government with authority over city transit budgets, but transit spending is reported at the agency level. The treatment is therefore measured at the city level and broadcast to each agency operating in that city; the dependent variable is each agency's annual capital outlay. Variation in the data arises from changes in transit capital spending over time, combined with differences in the timing of recall petitions and outcomes across cities.
+
+Successful recalls (meaning “Removed” or “Resigned”) are the treatment for Model A; the “Filing Year” of any petition constitutes the treatment for Model B.
+
+The dependent variable is annual transit capital spending. Capital spending is preferred over operating expenses because maintenance is often mandatory and might be less exposed to short-term political pressures. While capital spending is the priority, operating expenses are also examined as an alternative outcome in robustness checks, to test whether maintenance spending follows the same pattern. Spending is logged to normalize the distribution.
+
+One major identification problem is that recalls may follow fiscal crises. As a result, towns may cut transit spending not out of fear of voters, but to stabilize their finances. To mitigate this, the design uses a "recall-active" population, meaning all of the towns in the sample have a recall attempt between 2014 to 2024\. This helps control for unobserved factors that make a city "recall-prone." Regarding confounders, both models include time-varying controls for local economic conditions and population density.
+
+The regression model for Model A is:
+
+$$
+TransitSpending_{it} = \sum_{j=-k}^m \tau_j D_{i,t-j} + \gamma X_{it} + \alpha_i + \delta_t + \epsilon_{it}
+$$
+
+Model A estimates the effect of recalls on municipal transit spending among recall-active municipalities using an event-study specification that follows how spending changes over time around a successful recall. The outcome variable is total transit capital spending for agency-city pair *i* in year *t*. The independent variables (Di,t-j) are a set of event-year indicators indexed by *j*, which capture how spending differs in the years before and after a recall. Standard errors are clustered at the city level to account for correlation in transit spending over time within municipalities.
+
+The model includes a set of indicators for each year relative to the recall. These indicators are indexed by *j*, where negative values correspond to years before the recall, *j* \= 0 is the recall year, and positive values correspond to years after. This allows the effect of a recall to vary across time, instead of forcing it to be constant.
+
+Each event-year indicator equals one if agency-city pair *i* is observed in event-year *j* of its city's recall timeline in calendar year *t*, and zero otherwise. This aligns all recalled cities by event time, even though recalls occur in different calendar years. The year immediately before the recall is omitted and serves as the baseline.
+
+**τ** measures how transit spending in each event-year compares to this baseline. Estimates from the pre-recall years are used to see whether spending trends differ prior to the recall, while estimates from the post-recall years capture whether and how spending changes following the recall.
+
+The model also includes time-varying city-level controls, denoted by *X* for agency-city pair *i* in year *t*, specifically unemployment and population density. The associated coefficients are **γ**. Agency-city fixed effects (**α**) absorb characteristics of each agency-city pair that do not change over time, like institutional structure, long-run political preferences, and transit mode mix. Year fixed effects (**δ**) control for shocks common to all cities in a given year, such as macroeconomic conditions (like a big pandemic that severely reduces ridership) or nationwide policy changes affecting transit funding.
+
+**ε** is the error, and captures unobserved shocks to transit spending that vary across agency-city pairs and over time. Identification comes from comparing changes in transit spending within an agency-city pair before and after a recall to changes observed in other recall-active agency-city pairs in the same year. This approach assumes that, absent a recall, spending trends would have evolved similarly across these agency-city pairs.
+
+The regression model for Model B is:
+
+$$
+TransitSpending_{it} = \beta_1 PetitionFiled_{it} + \gamma X_{it} + \alpha_i + \delta_t + \epsilon_{it}
+$$
+
+Model B focuses on the filing year of a recall petition, regardless of whether the recall ultimately succeeds, and tests whether the filing itself is associated with a short-term drop in transit capital spending. The treatment is a dummy variable equal to 1 in the year an official recall petition is filed and 0 otherwise. The model includes the same set of agency-city fixed effects, year fixed effects, and time-varying controls as Model A, and standard errors are clustered at the city level.
+
+Because the panel spans the COVID-19 pandemic, Model B is also estimated with an interaction that allows the petition effect to differ during 2020-2021, when transit ridership and municipal budgets shifted sharply across the country. “Culture wars” around policies like mask mandates also may have changed the nature of recalls, leading to a different effect on transit spending during that period.
+
+$$
+TransitSpending_{it}=\beta_1 PetitionFiled_{it}+\beta_2(PetitionFiled_{it}\times COVID_t)+\gamma X_{it}+\alpha_i+\delta_t+\epsilon_{it}
+$$
+
+The interaction coefficient β₂ measures how the petition effect during the pandemic differs from the effect in other years. Outside the COVID period, a petition filing is associated with a change of β₁ in transit capital spending. During 2020-2021, it is associated with β₁ \+ β₂. The COVID indicator itself isn’t added to the equation, as it would take the same value for every city in a given year, and is absorbed by the year fixed effects.
+
+A potential concern is that recall pressure on a mayor cannot translate to spending changes when the relevant agency is state-controlled or otherwise outside direct municipal authority. Including such agency-city pairs could bias estimates toward zero. Nevertheless, it is still possible that the effect is felt: the recall city may be influential enough that it can move the agency’s capital spending through levers such as fiscal contributions, permitting power over agency projects, or political power in the state capital.
+
+To assess robustness, pre-recall spending trends are examined to verify that treated and control municipalities follow similar trajectories before recall activity. The analysis also re-estimates the event study over wider and narrower windows around the recall, from three years on each side to seven. The main specification pools all event years more than five from the recall into its endpoint indicators. Varying the end-period width checks if the estimated path actually reflects the spending data, and not the statistical choice of how to pool more distant event years.
+
+# Data
+
+Data for recall elections comes from Ballotpedia, a community-maintained encyclopedia of US elections. Ballotpedia's Recall Reports were scraped into a dataset of recall events. Each recall has a filing date and an outcome category. Ballotpedia tracks four potential paths for an attempt: Removed, Resigned, Defeated, and Did Not Make Ballot. Removed means the recall vote was held and the politician was forced out. Resigned means the politician resigned during the recall process. Defeated means the recall vote was held but failed, leaving the politician in office. Did Not Make Ballot means the petition was filed but did not qualify for a vote.
+
+Seven entries could not be automatically assigned a clear outcome, and were manually classified depending on the mayor’s electoral fate. One of these entries involved a recall for both the mayor and “mayor pro tem” of Estes Park, Colorado. Since the “mayor pro tem” essentially serves as a backup mayor (“The Tough Job of Being Mayor”), this recall was classified per the fate of Estes Park’s actual mayor.
+
+The recall’s filing year serves as the treatment timing for Model B. A binary indicator for any Removed or Resigned outcome defines the treatment pool for Model A. Petition filings are spread unevenly across the decade, peaking in 2020 and 2021, which together account for almost half of the 196 petition agency-city-years (Figure 1).
+
+
+```{=latex}
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{C:/Users/Anant/Here_Space/Coding_Projects/Recalls and Public Transit/output/figures/fig_petitions_by_year.png}
+\caption{Petition-filing agency-city-years per calendar year.}
+\end{figure}
+```
+
+
+Data on transit capital spending comes from the National Transit Database (NTD), maintained by the Federal Transit Administration. Transit operators that receive federal funding are required to report annual financial and operational data to NTD, including a breakdown of capital expenses by mode and capital-use category. The variable used here is total annual capital spending at the agency level, summed across those categories.
+
+The NTD record format changed in 2022\. For the 2014 to 2021 period, capital spending data is published as a per-year Excel file on FTA's website. Starting in 2022, FTA migrated to a new portal with a single dataset covering 2022 to 2024\. The two formats were combined into a single agency-year panel.
+
+Capital spending is skewed towards the higher side. Most observed city-years are modest, while a few reach hundreds of millions or billions, which pulls the mean far above the median. Across observed city-years, capital ranges from under \$500 to more than \$2 billion, with a median of \$1.5 million against a mean near \$48 million (Figure 2). The dependent variable is therefore log(1 \+ capital spending) (to handle any years with zero-capital spending), which draws that long upper tail into a roughly symmetric distribution.
+
+
+```{=latex}
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{C:/Users/Anant/Here_Space/Coding_Projects/Recalls and Public Transit/output/figures/fig_outcome_dist.png}
+\caption{Distribution of transit capital spending, raw and logged.}
+\end{figure}
+```
+
+
+The treatment is observed at the city level, but the outcome is observed at the agency level. To link these two together, three nested rules match agencies to cities. First, an agency is matched by headquarters to a city if the agency reports its headquarters in that city. Second, an agency is matched to a city by its service area if the city falls inside the agency's reported service-area Places, listed in FTA's Counties-and-Places dataset. Third, an agency is matched by county when the city's county falls inside the agency's reported service-area counties.
+
+The service-area dataset is only available for reporting year 2024, so the same coverage map is applied across all panel years. The reported coverage reflects each agency's demand-response (paratransit) service. By ADA rules, demand-response coverage must match an agency's fixed-route coverage. The service-area data therefore approximates the agency's overall service footprint.
+
+The analysis sample is built in two stages: First, the “recall-active” population of cities is gathered. This consists of every city with at least one mayoral recall petition filed between 2014 and 2024\. For Model A, the recall-active cities are further categorized into a treatment pool (with at least one Removed or Resigned outcome) and a control pool (with petition activity but no successful recall).
+
+After recall-active municipalities are recorded, the agency-city panel is built. Along with having an affiliation with a city through headquarters or service-area, the agencies in each city must have enough NTD coverage in the 2014-2024 window to allow for the regression to work. This means each treated city must have at least one NTD-observed year before the first successful recall (for Model A) or the first petition filing (for Model B), and at least one after. For Model A, control cities only need at least one NTD-observed year in the window via one of the matching rules.
+
+The matching rules produce three samples, each increasingly strict over which agency counts as belonging to a recall city. The extended-coverage sample (EXT) counts an agency matched in any of the three ways above (headquarters, city or county service area). The headquarters sample (HQ) counts only agencies headquartered in the city. The restricted sample (REST) counts only agencies that are both headquartered in the city and serve it. Each step narrows the sample to agencies more closely tied to the recall city.
+
+Table 1 reports the counts at each step of the sample’s construction, for both models and all three samples.
+
+
+```{=latex}
+\begin{table}[ht]
+
+\caption{\label{tab:tab-cascade}Sample cascade}
+\centering
+\begin{threeparttable}
+\begin{tabular}[t]{lrrr}
+\toprule
+Step & EXT & HQ & REST\\
+\midrule
+Recall-active universe (cities) & 359 & 359 & 359\\
+Successful recall pool (cities) & 112 & 112 & 112\\
+Model A: treated cities (in regression) & 64 & 11 & 4\\
+Model A: control cities (in regression) & 221 & 99 & 76\\
+Model A: agency-city pairs (in regression) & 1206 & 210 & 96\\
+\addlinespace
+Model B: cities (in regression) & 236 & 86 & 59\\
+Model B: agency-city pairs (in regression) & 1127 & 178 & 74\\
+Model B: petition agency-city-years (in regression) & 726 & 125 & 72\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item The first two rows cover all recall-active cities; the per-model rows count the cities, agency-city pairs, and petition agency-city-years entering each regression after dropping rows with missing controls. EXT = agency matched by headquarters, service-area place, or service-area county; HQ = agency headquartered in the city; REST = agency both headquartered in and serving the city.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+```
+
+
+As Figure 3 shows, NTD coverage is uneven across the panel, with thinner reporting in some years than others.
+
+
+```{=latex}
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{C:/Users/Anant/Here_Space/Coding_Projects/Recalls and Public Transit/output/figures/fig_coverage_heatmap.png}
+\caption{NTD reporting coverage by year and group.}
+\end{figure}
+```
+
+
+Figure 4 shows a decrease in logged capital spending across samples in 2016 and 2020 (when the COVID pandemic hit), and in the restricted and extended samples for 2022 (when federal aid may have started to dry up). The restricted and headquarters samples have fewer observations and tend to be more volatile than the most permissive tier, the extended-coverage sample. As Model A’s restricted treatment sample contains just 4 cities, the volatility of the restricted tier can weigh heavily on its estimates.
+
+
+```{=latex}
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{C:/Users/Anant/Here_Space/Coding_Projects/Recalls and Public Transit/output/figures/fig_capital_by_tier.png}
+\caption{Mean log(transit capital) by coverage tier and calendar year.}
+\end{figure}
+```
+
+
+Both models include two controls, county unemployment and population density. Unemployment comes from the Bureau of Labor Statistics' Local Area Unemployment Statistics (LAUS), with cities tied to counties through the Census 2020 Place-by-County file. Density comes from the Census Population Estimates Program (PEP). Because PEP revises earlier years with each release, two are combined: the 2019 release for years before 2020 and the 2024 release from 2020 on. Local budget data from the Census Annual Survey of State and Local Government Finances was also explored as a control for fiscal crises, but its coverage proved too thin across the panel to support that role.
+
+Tables 2 and 3 summarize the variables used in Model A and Model B.
+
+
+```{=latex}
+\begin{table}[ht]
+
+\caption{\label{tab:tab-sample-stats}Sample statistics: Model A}
+\centering
+\begin{threeparttable}
+\begin{tabular}[t]{llrrrrrr}
+\toprule
+Sample & Variable & N & Mean & Median & SD & Min & Max\\
+\midrule
+EXT & log\_transit\_cap (DV) & 7438 & 1.46e+01 & 1.43e+01 & 2.53e+00 & 6.20 & 2.15e+01\\
+EXT & Capital, USD (raw DV) & 7438 & 4.87e+07 & 1.58e+06 & 2.11e+08 & 491.00 & 2.14e+09\\
+EXT & Population density & 15576 & 6.07e+03 & 3.95e+03 & 6.14e+03 & 64.70 & 5.33e+04\\
+EXT & Unemployment rate (\%) & 15576 & 5.29e+00 & 4.80e+00 & 2.25e+00 & 1.50 & 2.46e+01\\
+EXT & Petition filed (0/1) & 15829 & 9.65e-02 & 0.00e+00 & 2.95e-01 & 0.00 & 1.00e+00\\
+\addlinespace
+HQ & log\_transit\_cap (DV) & 1251 & 1.44e+01 & 1.40e+01 & 2.68e+00 & 7.47 & 2.15e+01\\
+HQ & Capital, USD (raw DV) & 1251 & 5.45e+07 & 1.19e+06 & 2.34e+08 & 1750.00 & 2.14e+09\\
+HQ & Population density & 2310 & 3.32e+03 & 2.27e+03 & 3.09e+03 & 64.70 & 1.96e+04\\
+HQ & Unemployment rate (\%) & 2310 & 5.02e+00 & 4.50e+00 & 2.27e+00 & 1.50 & 2.30e+01\\
+HQ & Petition filed (0/1) & 2321 & 1.01e-01 & 0.00e+00 & 3.01e-01 & 0.00 & 1.00e+00\\
+\addlinespace
+REST & log\_transit\_cap (DV) & 713 & 1.49e+01 & 1.48e+01 & 2.48e+00 & 8.10 & 2.15e+01\\
+REST & Capital, USD (raw DV) & 713 & 5.11e+07 & 2.75e+06 & 2.26e+08 & 3300.00 & 2.10e+09\\
+REST & Population density & 1056 & 3.44e+03 & 2.32e+03 & 3.30e+03 & 473.00 & 1.96e+04\\
+REST & Unemployment rate (\%) & 1056 & 5.03e+00 & 4.50e+00 & 2.38e+00 & 1.50 & 2.30e+01\\
+REST & Petition filed (0/1) & 1056 & 1.00e-01 & 0.00e+00 & 3.01e-01 & 0.00 & 1.00e+00\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item EXT = agency matched by headquarters, service-area place, or service-area county; HQ = agency headquartered in the city; REST = agency both headquartered in and serving the city.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+```
+
+
+
+```{=latex}
+\begin{table}[ht]
+
+\caption{\label{tab:tab-sample-stats}Sample statistics: Model B}
+\centering
+\begin{threeparttable}
+\begin{tabular}[t]{llrrrrrr}
+\toprule
+Sample & Variable & N & Mean & Median & SD & Min & Max\\
+\midrule
+EXT & log\_transit\_cap (DV) & 7176 & 1.46e+01 & 1.43e+01 & 2.52e+00 & 6.20 & 2.15e+01\\
+EXT & Capital, USD (raw DV) & 7176 & 4.93e+07 & 1.67e+06 & 2.13e+08 & 491.00 & 2.14e+09\\
+EXT & Population density & 14619 & 6.34e+03 & 4.23e+03 & 6.08e+03 & 64.70 & 2.36e+04\\
+EXT & Unemployment rate (\%) & 14619 & 5.31e+00 & 4.80e+00 & 2.17e+00 & 1.50 & 1.59e+01\\
+EXT & Petition filed (0/1) & 14839 & 9.52e-02 & 0.00e+00 & 2.94e-01 & 0.00 & 1.00e+00\\
+\addlinespace
+HQ & log\_transit\_cap (DV) & 1144 & 1.46e+01 & 1.42e+01 & 2.65e+00 & 7.47 & 2.15e+01\\
+HQ & Capital, USD (raw DV) & 1144 & 5.90e+07 & 1.49e+06 & 2.44e+08 & 1750.00 & 2.14e+09\\
+HQ & Population density & 1958 & 3.56e+03 & 2.60e+03 & 3.02e+03 & 473.00 & 1.89e+04\\
+HQ & Unemployment rate (\%) & 1958 & 4.90e+00 & 4.50e+00 & 2.03e+00 & 1.50 & 1.55e+01\\
+HQ & Petition filed (0/1) & 1969 & 9.95e-02 & 0.00e+00 & 2.99e-01 & 0.00 & 1.00e+00\\
+\addlinespace
+REST & log\_transit\_cap (DV) & 652 & 1.50e+01 & 1.50e+01 & 2.45e+00 & 8.10 & 2.15e+01\\
+REST & Capital, USD (raw DV) & 652 & 5.49e+07 & 3.21e+06 & 2.36e+08 & 3300.00 & 2.10e+09\\
+REST & Population density & 814 & 3.73e+03 & 2.98e+03 & 3.13e+03 & 721.00 & 1.89e+04\\
+REST & Unemployment rate (\%) & 814 & 5.04e+00 & 4.60e+00 & 2.04e+00 & 1.60 & 1.55e+01\\
+REST & Petition filed (0/1) & 814 & 1.02e-01 & 0.00e+00 & 3.03e-01 & 0.00 & 1.00e+00\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item EXT = agency matched by headquarters, service-area place, or service-area county; HQ = agency headquartered in the city; REST = agency both headquartered in and serving the city.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+```
+
+
+# Results: Model A
+
+Model A is estimated on each of the three samples. Each coefficient compares an agency's logged capital spending in a given event year with its spending in the year before the city's first successful recall (event year \-1, the omitted baseline), relative to control cities over the same period. The estimates include agency-city and year fixed effects, and standard errors are clustered by city.
+
+In the extended sample, where operators may serve other municipalities and are not necessarily headquartered in the recall city, no event-year coefficient is statistically significant. The recall-year coefficient is 0.19, and subsequent event-years stay positive and statistically insignificant.
+
+
+```{=latex}
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{C:/Users/Anant/Here_Space/Coding_Projects/Recalls and Public Transit/output/figures/fig_eventstudy_A_extended.png}
+\caption{Model A – extended-coverage event-study.}
+\end{figure}
+```
+
+
+The headquarters sample, which includes only agency-city pairs where the agency is headquartered in the city, has 11 treated cities and about 1,200 agency-city-year observations. As with the extended sample, no event-year coefficient is statistically significant. The recall-year coefficient is \-0.10, but subsequent event-years are positive.
+
+
+```{=latex}
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{C:/Users/Anant/Here_Space/Coding_Projects/Recalls and Public Transit/output/figures/fig_eventstudy.png}
+\caption{Model A – HQ-anchored event-study.}
+\end{figure}
+```
+
+
+The restricted sample narrows the treated group to four cities – a quite small treatment sample size. The post-recall coefficients are negative, and are significant (p\<0.01) for the recall year, event-year 2, and event-year 3\. The \-0.832 coefficient for the recall-year implies that (relative to the control cities) transit capital spending drops by 56% (1-e^(-0.832)) the year an ultimately-successful recall is filed (compared to the year preceding the recall attempt). For event-year 2, the \-1.785 coefficient implies that relative to the control cities, transit capital spending drops by 83% two years after the successful recall attempt is filed (again, compared to the year preceding the recall attempt). But with only 4 treated cities, this finding is susceptible to outliers and not representative of the broader population of recall-active cities.
+
+
+```{=latex}
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{C:/Users/Anant/Here_Space/Coding_Projects/Recalls and Public Transit/output/figures/fig_eventstudy_A_restricted.png}
+\caption{Model A – restricted-coverage event-study.}
+\end{figure}
+```
+
+
+Another caveat to its interpretation: the joint F-test of the pre-treatment event-time coefficients rejects parallel pre-treatment trends (F \= 26.8, p \< 0.001), indicating that treated cities were already on a different trajectory compared to control cities prior to "treatment" (the successful recall attempt). Additionally, the restricted sample's pre-recall coefficients are significant and negative in event years \-2, \-3, and \-5 (p \< 0.05). As Figure 7 shows, the fall in capital spending begins before the recall.
+
+This pre-recall decline in transit capital spending could be caused by pre-existing political instability in the treated cities. The recall-active design is meant to hold such turbulence constant between treated and control cities, but with only 4 treated cities, the treatment sample may be especially volatile, compared to the control sample. But the pre-trend could also be caused by decision-makers anticipating political challenges ahead, and cutting back capital spending accordingly.
+
+The null results in the extended sample are to be expected. The extended sample includes large public transit agencies with a sprawling service footprint – the agency does not necessarily need to be headquartered in the recall city. When the recall city is one amongst many served by the transit agency, then its political volatility would be less relevant to the agency. The city may not directly control the transit agency (for example, Park Ridge, New Jersey, is served by New Jersey Transit – a state-run agency that would be less exposed to any turnover in Park Ridge).
+
+The headquarters sample mandates geographic proximity, but still doesn't necessarily guarantee a transit agency will be exposed to its host city's political volatility. Take Newark, New Jersey, for example. Newark is not a recall-active city, but if it did observe a successful recall, then the city-agency pair would consist of Newark and New Jersey Transit, which again is a state-run agency that is more exposed to state politics, not municipal affairs in Newark. The results in the headquarter sample are null as well for Model A.
+
+The restricted sample does have statistically significant results, implying that successful oustings of sitting mayors through the recall mechanism can depress transit capital spending. But as mentioned earlier, its results come with heavy caveats from the small sample size and pre-treatment trends interfering with the event study.
+
+
+```{=latex}
+\begin{table}[ht]
+\centering
+\footnotesize\begin{talltblr}[         %% tabularray outer open
+caption={Model A event-study across coverage tiers},
+note{}={* p \num{< 0.1}, ** p \num{< 0.05}, *** p \num{< 0.01}},
+note{ }={Event-study coefficients on log(transit capital + 1). Reference period t = -1. Window endpoints are binned.},
+note{  }={Agency-city and year fixed effects. Standard errors clustered by city.},
+note{   }={EXT: agency matched by headquarters, service-area place, or service-area county. HQ: agency headquartered in the city. REST: agency both headquartered in and serving the city.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]Q[]},
+hline{2}={1-4}{solid, black, 0.05em},
+hline{26}={1-4}{solid, black, 0.05em},
+hline{1}={1-4}{solid, black, 0.08em},
+hline{34}={1-4}{solid, black, 0.08em},
+column{2-4}={}{halign=c},
+column{1}={}{halign=l},
+}                     %% tabularray inner close
+& EXT & HQ & REST \\
+t = -5 & \num{0.210} & \num{0.013} & \num{-0.358}** \\
+& (\num{0.166}) & (\num{0.333}) & (\num{0.174}) \\
+t = -4 & \num{0.035} & \num{0.106} & \num{-1.141} \\
+& (\num{0.214}) & (\num{0.508}) & (\num{0.727}) \\
+t = -3 & \num{0.103} & \num{-0.199} & \num{-0.721}*** \\
+& (\num{0.168}) & (\num{0.458}) & (\num{0.240}) \\
+t = -2 & \num{0.001} & \num{-0.187} & \num{-1.172}*** \\
+& (\num{0.163}) & (\num{0.398}) & (\num{0.363}) \\
+t = 0 & \num{0.188} & \num{-0.098} & \num{-0.832}*** \\
+& (\num{0.150}) & (\num{0.398}) & (\num{0.242}) \\
+t = 1 & \num{0.225} & \num{0.756} & \num{-0.136} \\
+& (\num{0.205}) & (\num{0.521}) & (\num{0.267}) \\
+t = 2 & \num{0.046} & \num{0.577} & \num{-1.785}*** \\
+& (\num{0.188}) & (\num{0.826}) & (\num{0.293}) \\
+t = 3 & \num{0.161} & \num{0.623} & \num{-1.434}*** \\
+& (\num{0.176}) & (\num{0.911}) & (\num{0.309}) \\
+t = 4 & \num{0.247} & \num{1.312} & \num{-0.222} \\
+& (\num{0.162}) & (\num{0.927}) & (\num{0.351}) \\
+t = 5 & \num{0.138} & \num{0.269} & \num{-0.467} \\
+& (\num{0.140}) & (\num{0.647}) & (\num{0.425}) \\
+log(pop density) & \num{-0.119} & \num{1.456} & \num{0.183} \\
+& (\num{0.203}) & (\num{1.358}) & (\num{1.680}) \\
+Unemployment rate & \num{0.024} & \num{-0.002} & \num{0.020} \\
+& (\num{0.015}) & (\num{0.043}) & (\num{0.049}) \\
+Num.Obs. & \num{7142} & \num{1220} & \num{702} \\
+R2 & \num{0.844} & \num{0.857} & \num{0.843} \\
+R2 Adj. & \num{0.816} & \num{0.828} & \num{0.815} \\
+R2 Within & \num{0.001} & \num{0.011} & \num{0.009} \\
+R2 Within Adj. & \num{-0.001} & \num{-0.000} & \num{-0.011} \\
+Std.Errors & by: city\_id & by: city\_id & by: city\_id \\
+FE: agency\_city & X & X & X \\
+FE: year & X & X & X \\
+\end{talltblr}
+\end{table}
+```
+
+
+The restricted sample’s results remain similar when the end-point width changes. The main results already pool event-years more than five into the endpoint indicators. When that cutoff is changed to three event-years, or seven-event years, the recall-year and event year 2 remain close to their original versions.
+
+
+```{=latex}
+\begin{table}[ht]
+
+\caption{\label{tab:tab-robust-A}Model A end-period-width robustness, restricted sample}
+\centering
+\begin{threeparttable}
+\begin{tabular}[t]{lll}
+\toprule
+End-period width & Recall year (t=0) & Event-year 2\\
+\midrule
+5 years (baseline) & -0.832 (0.242) & -1.785 (0.293)\\
+3 years & -0.841 (0.239) & -1.729 (0.300)\\
+7 years & -0.831 (0.242) & -1.762 (0.299)\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item Event-study coefficients on log(transit capital + 1), city-clustered standard errors in parentheses, as the end-period width (the cutoff beyond which distant event-years are pooled into the endpoint indicators) is set to 3, 5 (baseline), and 7 years.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+```
+
+
+For the operating expenses robustness check, no event-years in the restricted sample are significant, with the exception of event-year 1 (which has a coefficient close to 0). This is as expected. Operating expenses like routine maintenance and salaries cannot be cut back as easily without suffering immediate, visible consequences, which a politically imperiled official would be loath to do. A statistically significant result would have signaled a broader change in transit budgets, an indication that a different mechanism may have been behind the spending shifts. This null result keeps the focus on capital expenditures.
+
+
+```{=latex}
+\begin{table}[ht]
+\centering
+\footnotesize\begin{talltblr}[         %% tabularray outer open
+caption={Model A robustness: operating expenses as the outcome (restricted sample)},
+note{}={* p \num{< 0.1}, ** p \num{< 0.05}, *** p \num{< 0.01}},
+note{ }={Event-study coefficients on log(transit operating + 1). Reference period t = -1. Distant event-years are pooled into the endpoint indicators.},
+note{  }={Agency-city and year fixed effects. Standard errors clustered by city.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]},
+hline{2}={1-2}{solid, black, 0.05em},
+hline{26}={1-2}{solid, black, 0.05em},
+hline{1}={1-2}{solid, black, 0.08em},
+hline{34}={1-2}{solid, black, 0.08em},
+column{2}={}{halign=c},
+column{1}={}{halign=l},
+}                     %% tabularray inner close
+& Operating expenses \\
+t = -5 & \num{0.110} \\
+& (\num{0.137}) \\
+t = -4 & \num{-0.033} \\
+& (\num{0.168}) \\
+t = -3 & \num{0.090} \\
+& (\num{0.151}) \\
+t = -2 & \num{-0.024} \\
+& (\num{0.032}) \\
+t = 0 & \num{0.020} \\
+& (\num{0.026}) \\
+t = 1 & \num{0.097}** \\
+& (\num{0.040}) \\
+t = 2 & \num{0.327} \\
+& (\num{0.216}) \\
+t = 3 & \num{0.054} \\
+& (\num{0.232}) \\
+t = 4 & \num{-0.010} \\
+& (\num{0.270}) \\
+t = 5 & \num{-0.095} \\
+& (\num{0.301}) \\
+log(pop density) & \num{0.378} \\
+& (\num{1.175}) \\
+Unemployment rate & \num{0.040} \\
+& (\num{0.054}) \\
+Num.Obs. & \num{702} \\
+R2 & \num{0.961} \\
+R2 Adj. & \num{0.954} \\
+R2 Within & \num{0.007} \\
+R2 Within Adj. & \num{-0.013} \\
+Std.Errors & by: city\_id \\
+FE: agency\_city & X \\
+FE: year & X \\
+\end{talltblr}
+\end{table}
+```
+
+
+# Results: Model B
+
+Model B is estimated on each of the three samples. The treatment is a single indicator equal to one in the year a recall petition is filed, and zero otherwise. Each coefficient compares an agency's logged capital spending in petition-filing years[^3] against its spending in other years, net of agency-city and year fixed effects, with standard errors clustered by city. Because petition activity is concentrated in 2020 and 2021, each sample is also estimated with an interaction that lets the petition effect differ during those two pandemic years.
+
+
+```{=latex}
+\begin{table}[ht]
+\centering
+\footnotesize\begin{talltblr}[         %% tabularray outer open
+caption={Model B petition DiD across coverage tiers},
+note{}={* p < 0.1, ** p < 0.05, *** p < 0.01},
+note{ }={Coefficients on log(transit capital + 1). Petition filed = 1 in a petition-filing year.},
+note{  }={Columns 1-3: baseline. Columns 4-6: petition interacted with a 2020-2021 indicator.},
+note{   }={Agency-city and year fixed effects. Standard errors clustered by city.},
+note{    }={EXT: agency matched by headquarters, service-area place, or service-area county. HQ: agency headquartered in the city. REST: agency both headquartered in and serving the city.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]Q[]Q[]Q[]Q[]},
+hline{2}={3,6-7}{solid, black, 0.03em},
+hline{2}={2,5}{solid, black, 0.03em, l=-0.5},
+hline{2}={4}{solid, black, 0.03em, r=-0.5},
+hline{3}={1-7}{solid, black, 0.05em},
+hline{11}={1-7}{solid, black, 0.05em},
+hline{1}={1-7}{solid, black, 0.08em},
+hline{19}={1-7}{solid, black, 0.08em},
+column{3-4,6-7}={}{halign=c},
+cell{1}{1}={}{halign=c},
+cell{1}{2}={c=3}{halign=c},
+cell{1}{5}={c=3}{halign=c},
+cell{2-18}{1}={}{halign=l},
+cell{2-18}{2}={}{halign=c},
+cell{2-18}{5}={}{halign=c},
+}                     %% tabularray inner close
+& Baseline &  &  & × COVID (2020-21) &  &  \\
+& EXT & HQ & REST & EXT  & HQ  & REST  \\
+Petition filed & 0.018 & 0.113 & 0.144 & 0.031 & 0.205* & 0.325** \\
+& (0.039) & (0.106) & (0.148) & (0.048) & (0.117) & (0.149) \\
+Petition × COVID &  &  &  & -0.043 & -0.240 & -0.518 \\
+&  &  &  & (0.082) & (0.186) & (0.316) \\
+log(pop density) & -0.133 & 1.842 & 0.079 & -0.131 & 1.840 & 0.028 \\
+& (0.235) & (1.368) & (1.476) & (0.235) & (1.367) & (1.473) \\
+Unemployment rate & 0.027* & 0.016 & 0.039 & 0.028* & 0.016 & 0.038 \\
+& (0.015) & (0.048) & (0.060) & (0.015) & (0.047) & (0.058) \\
+Num.Obs. & 6916 & 1125 & 652 & 6916 & 1125 & 652 \\
+R2 & 0.842 & 0.857 & 0.845 & 0.842 & 0.857 & 0.846 \\
+R2 Adj. & 0.815 & 0.831 & 0.821 & 0.815 & 0.831 & 0.822 \\
+R2 Within & 0.000 & 0.005 & 0.003 & 0.001 & 0.006 & 0.008 \\
+R2 Within Adj. & -0.000 & 0.002 & -0.003 & -0.000 & 0.002 & 0.001 \\
+Std.Errors & by: city\_id & by: city\_id & by: city\_id & by: city\_id & by: city\_id & by: city\_id \\
+FE: agency\_city & X & X & X & X & X & X \\
+FE: year & X & X & X & X & X & X \\
+\end{talltblr}
+\end{table}
+```
+
+
+Without the pandemic interaction, the petition coefficient is positive but never reaches significance. It is 0.018 in the extended sample, 0.113 in the headquarters sample, and 0.144 in the restricted sample (Table 7). When the pandemic interaction is added, however, the picture changes. Once the petition effect is allowed to differ in 2020 and 2021 (when there was a surge of recall filings), the non-pandemic effect becomes clearer in the narrower samples, reaching significance in the restricted sample, while the pandemic-year effect stays near zero throughout (Figure 8, Table 8).
+
+
+```{=latex}
+\begin{figure}[ht]
+\centering
+\includegraphics[width=\linewidth,height=0.42\textheight,keepaspectratio]{C:/Users/Anant/Here_Space/Coding_Projects/Recalls and Public Transit/output/figures/fig_modelB_coef.png}
+\caption{Model B – petition effect on transit capital by coverage tier.}
+\end{figure}
+```
+
+
+
+```{=latex}
+\begin{table}[ht]
+\centering
+\footnotesize\begin{talltblr}[         %% tabularray outer open
+caption={Model B petition effect by period and coverage tier},
+note{}={Outside COVID = the petition coefficient (b1); during COVID = b1 + b2 (petition + petition x COVID).},
+note{ }={During-COVID SE combines both terms via the fitted covariance. 95\% CI uses +/- 1.96 SE.},
+note{  }={Outside-COVID p is the petition coefficient's p; during-COVID p is a delta-method linear-combination test of b1 + b2 = 0.},
+note{   }={From the COVID-interaction spec on each tier: agency-city and year fixed effects, SE clustered by city.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]Q[]Q[]Q[]},
+hline{2}={1-6}{solid, black, 0.05em},
+hline{1}={1-6}{solid, black, 0.08em},
+hline{8}={1-6}{solid, black, 0.08em},
+}                     %% tabularray inner close
+Tier & Period & Effect & SE & 95\% CI & p \\
+EXT & Outside COVID & 0.031 & 0.048 & [-0.063, 0.124] & 0.524 \\
+EXT & During COVID (2020-21) & -0.013 & 0.068 & [-0.145, 0.120] & 0.852 \\
+HQ & Outside COVID & 0.205 & 0.117 & [-0.024, 0.435] & 0.083 \\
+HQ & During COVID (2020-21) & -0.035 & 0.167 & [-0.363, 0.293] & 0.834 \\
+REST & Outside COVID & 0.325 & 0.149 & [0.032, 0.618] & 0.034 \\
+REST & During COVID (2020-21) & -0.193 & 0.288 & [-0.759, 0.372] & 0.503 \\
+\end{talltblr}
+\end{table}
+```
+
+
+In the extended sample, the petition effect is near zero both outside and during the pandemic (p \= 0.52 and p \= 0.85, respectively). This null result is expected, for the same reason as in Model A. The extended sample includes large agencies with sprawling service areas that are not headquartered in the recall city, so a single city's petition activity may be of less relevance to the agency.
+
+In the headquarters sample, the non-pandemic effect rises to 0.205 (p \= 0.083). Geographic proximity by headquarters brings the agency closer to the recall city, but it does not guarantee that the agency is exposed to that city's politics or under its budgetary control.
+
+The restricted sample, where the agency is both headquartered in and serves the recall city, gives the clearest result. Outside the pandemic, the petition coefficient is 0.325 (p \= 0.034), or roughly 38% higher capital spending (e^0.325 \- 1). The effect comes into focus as the samples narrow and the tie between city and agency tightens. Notably, this is the opposite sign from the analysis in Model A, which found a short-term decrease in response to a successful recall attempt.
+
+As in Model A, however, in the restricted sample, the matched agency can be a large operator that also serves other jurisdictions, where the recall city is one voice among many – like Newark and New Jersey Transit (discussed in Model A). The restriction means that the agency is both based in the recall city and serves it, but does not guarantee municipal control. A robustness check is run by filtering agencies to only those that are run by local authorities (city, county, or other local government units) – the results are reported in Table 9\. The restricted sample is not statistically significant in this check, but increases in magnitude and remains positive. The sample size decreases by more than half, from 59 cities to 26, which could be contributing to the null result.
+
+
+```{=latex}
+\begin{table}[ht]
+
+\caption{\label{tab:tab-robust-B}Model B local-government robustness, restricted sample}
+\centering
+\begin{threeparttable}
+\begin{tabular}[t]{llr}
+\toprule
+Specification & Petition (non-COVID) & Cities\\
+\midrule
+Baseline (restricted sample) & 0.325 (0.149) & 59\\
+Local-government agencies only & 0.518 (0.369) & 26\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item Non-COVID petition coefficient (the petition main effect in the COVID-interaction specification) on log(transit capital + 1), city-clustered standard errors in parentheses. The second row keeps only agencies that are an arm of a local government.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}
+```
+
+
+For the operating expenses robustness check (reported in Table 10), the petition coefficient is insignificant in both the baseline and the COVID-interaction specifications. As with Model A, this is as expected – cuts to operating expenses would be more immediately felt by the public and thus be a less attractive target for cuts.
+
+
+```{=latex}
+\begin{table}[ht]
+\centering
+\footnotesize\begin{talltblr}[         %% tabularray outer open
+caption={Model B robustness: operating expenses as the outcome (restricted sample)},
+note{}={* p \num{< 0.1}, ** p \num{< 0.05}, *** p \num{< 0.01}},
+note{ }={Coefficients on log(transit operating + 1). Petition filed = 1 in a petition-filing year.},
+note{  }={The second column interacts petition with a 2020-2021 indicator.},
+note{   }={Agency-city and year fixed effects. Standard errors clustered by city.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]},
+hline{2}={1-3}{solid, black, 0.05em},
+hline{10}={1-3}{solid, black, 0.05em},
+hline{1}={1-3}{solid, black, 0.08em},
+hline{18}={1-3}{solid, black, 0.08em},
+column{2-3}={}{halign=c},
+column{1}={}{halign=l},
+}                     %% tabularray inner close
+& Baseline & × COVID \\
+Petition filed & \num{-0.041} & \num{-0.003} \\
+& (\num{0.046}) & (\num{0.029}) \\
+Petition × COVID &  & \num{-0.111} \\
+&  & (\num{0.140}) \\
+log(pop density) & \num{1.048} & \num{1.038} \\
+& (\num{0.777}) & (\num{0.784}) \\
+Unemployment rate & \num{-0.014} & \num{-0.014} \\
+& (\num{0.018}) & (\num{0.018}) \\
+Num.Obs. & \num{652} & \num{652} \\
+R2 & \num{0.986} & \num{0.986} \\
+R2 Adj. & \num{0.984} & \num{0.984} \\
+R2 Within & \num{0.022} & \num{0.025} \\
+R2 Within Adj. & \num{0.017} & \num{0.018} \\
+Std.Errors & by: city\_id & by: city\_id \\
+FE: agency\_city & X & X \\
+FE: year & X & X \\
+\end{talltblr}
+\end{table}
+```
+
+
+Across the samples, petitions do not move spending during the pandemic, at least not to a statistically significant effect. In the restricted sample, the during-pandemic effect is \-0.193 (p \= 0.50), and the interaction term itself is \-0.518 (p \= 0.11). One possible explanation for the null effect is federal pandemic relief, which supported public transit during COVID and reduced the incentive for fiscally pressured mayors to touch transit budgets. Furthermore, recalls during that period may have been of a different nature: disputes over mask mandates and lockdowns that are unrelated to fiscal governance.
+
+The statistically significant positive finding in the restricted sample could indicate that incumbents facing a petition accelerate visible capital spending to signal competence and deliver tangible public goods before any vote. This would be essentially the opposite of austerity, as electoral pressure prods officials to improve services.
+
+But this narrative may be contradicted by the null results from the operating expenses robustness check. If an elected official was scrambling to improve governance to head off a recall threat, they might be compelled to boost operating spending, devoting funds to cleaning stations, increasing transit service on existing lines, and addressing any ongoing delays with more maintenance. All of these expenditures would be considered operating expenses, but the analysis finds no significant change to such spending. That being said, elected officials may be choosing to prioritize the more visible benefits capital spending offers, such as ribbon-cuttings and service expansions.
+
+The results could also be a product of reverse causality. A major transit project requires taxes or new debt up front. Residents may in turn balk at that immediate cost, and mount a recall, leading to the positive result seen in this analysis. Of the 391 mayoral recall attempts in the sample period, only about 29% ended in the mayor's removal or resignation, and more than half never qualified for the ballot. If removal is so rare to actually happen, incumbents may not treat a petition as a credible threat worth reacting to. This bolsters the argument in favor of reverse-causality (higher transit capital spending leading to recalls) driving the results.
+
+# Conclusion
+
+This thesis explores whether mayoral recall activity, both the removal of an official and the threat of an active petition, affects municipal transit capital spending. The question was tested on recall-active US cities between 2014 and 2024\. Model A was an event study on successful recalls to understand whether such recalls "chill" transit investment over time. Model B was a difference-in-differences analysis around petition filings to see if the act of filing a recall leads to an immediate drop in transit capital spending. Each was estimated on three nested samples, which tighten the link between a recall city and the transit agencies assigned to it.
+
+The three samples differ in how tightly each agency is tied to the recall city. The extended sample is the broadest, counting any agency linked to the city, including large operators that serve many other places, some of them run by a state rather than the city. The headquarters sample narrows to agencies based in the city. Neither produces a significant effect, though the Model B estimate edges toward significance in the headquarters sample. That fits the way the samples are built: as the tie between city and agency tightens, any effect should become easier to see.
+
+The restricted tier narrows the sample to agencies that are both based in the recall city and serving it. This is the tightest match between a city and an agency, where a recall could most plausibly reach the agency's budget. In the restricted sample, Model A shows a statistically significant decline in capital spending after a successful recall. On its own, this would support the idea that removing a mayor by recall depresses long-term transit investment. However, the Model A estimate rests on four treated cities, and it does not pass its pre-treatment trends test. Treated and control cities were already on different paths before the recall, so the post-recall trajectory may reflect those pre-existing differences as much as the recall itself.
+
+Model B looks at the impact of petition filings on short-term transit capital spending, and finds a positive relationship between the two. Outside the pandemic years, filing a recall petition is associated with significantly higher capital spending in the short-term. This estimate draws on the full set of recall-active cities in the restricted sample, and does not suffer from the same issue with pre-treatment trends as Model A does. The estimate does lose significance when the sample is limited to agencies run by local governments, where the number of cities in the sample roughly halves. The coefficient, however, stays positive and even grows in magnitude. The positive coefficient found by the analysis contradicts the negative effect recalls were hypothesized to have on immediate transit capital spending.
+
+During the pandemic years the petition effect vanishes. Federal relief may be behind this interaction: emergency aid propped up transit budgets through COVID, so local political pressure had little bearing on what agencies spent. The interaction could also reflect a change in what the recalls were about. A recall driven by mask mandates or lockdowns is not a verdict on the mayor's handling of the budget, so it gives less of a reason to move transit capital spending in either direction. One item for future work on this subject would be coding recalls by motivation. Separating fiscal disputes from culture-war fights over issues like mask mandates would test whether the spending response depends on what the recall is about.
+
+There are limitations from the data that might impact the analysis. The successful-recall sample is very small (four treated cities in the restricted tier) and its estimate is subject to a pre-existing downward trend in transit capital spending. Service-area coverage is observed only for 2024 and applied across all years, which means certain agency-city matches could be inaccurate at a specific time, and others could be missed. If an agency cut service to a recall-active city due to the pandemic, for example, that city could be missed in the restricted and extended samples for recalls preceding the pandemic \- missing any effect the recall had on transit capital spending. If an agency added service to a recall-active city years after a recall actually happened, the city and its recall would still be included in the restricted and extended samples \- a city and agency with no ties at the time of recall would be analyzed, potentially drawing the estimates towards a null result.
+
+Additionally, economic conditions enter at the county level rather than the town level. A county can hold multiple towns, so county unemployment may not capture the recall city's own economy, leaving local economic shocks that drive both recalls and spending only partly controlled. Because the treatment is measured at the city level and applied to every agency operating there, agencies outside municipal control may pull the estimates toward zero.
+
+Model B's positive result suggests politicians facing a petition rush to deliver visible public goods to satisfy discontented voters before a vote. If so, recall attempts could make officials more responsive to their constituents, or at least more willing to invest in public goods. In this reading, recalls can be beneficial for public transit, pushing politicians to improve the systems they run.
+
+There is an issue, however: no significant change in operating expenses. The argument for competence-signaling explains this missing effect by assuming officials prefer capital projects for their visibility. But that assumption is challenged by the time-crunch imposed by petitions: an official racing to address a recall would favor the fastest, easiest wins. Higher frequency and cleaner stations are easier to achieve than, say, a brand new station, whose ribbon-cutting may not arrive before the vote. As such, neither the operating nor the capital pattern looks like an official rushing to please voters.
+
+Alternatively, Model B’s results could be a product of transit spending itself. In this view, officials steer municipal money into transit capital projects, and voters frustrated by the up-front cost respond with a petition. A recall is how frustration at this kind of spending registers. Paired with Model A's caveated decline in transit spending, a successful recall could then push officials to retreat from transit capital spending. This would mean recalls can be detrimental to public transit, putting decision-makers under immediate political pressure over investments that only pay off in the long run.
+
+Under this alternative explanation, the recall does exactly what it is supposed to. Officials are more accountable to voters, as the public gains a lever against leaders who have lost their backing. But the same instrument can end up stymieing initiatives where costs are felt immediately and benefits arrive years later. An official who builds for the future exposes themselves in the present, and a recall exacerbates their exposure. In succeeding as an instrument of democracy, recalls may raise the political price of patience, and in turn push officials away from long-term investments that transit depends on.
+
+# Bibliography
+
+```{=latex}
+\setlength{\parindent}{0pt}
+\everypar{\hangindent=0.5in\hangafter=1}
+```
+
+
+Alt, James, et al. “Disentangling Accountability and Competence in Elections: Evidence from U.S. Term Limits.” *The Journal of Politics*, vol. 73, no. 1, Jan. 2011, pp. 171–186, https://doi.org/10.1017/s0022381610000940.
+
+Artiles, Miriam, et al. “Accountability, Political Capture, and Selection into Politics: Evidence from Peruvian Municipalities.” *The Review of Economics and Statistics*, vol. 103, no. 2, 24 Jan. 2020, pp. 397–411, direct.mit.edu/rest/article-abstract/103/2/397/97665/Accountability-Political-Capture-and-Selection, https://doi.org/10.1162/rest\_a\_00906.
+
+Avery, Brett. “30 and Counting: Florio Tax Increase.” *New Jersey Monthly*, 3 Feb. 2008, njmonthly.com/articles/towns-schools/30-and-counting-florio-tax-increase-2/.
+
+Besley, T., and A. Case. “Does Electoral Accountability Affect Economic Policy Choices? Evidence from Gubernatorial Term Limits.” *The Quarterly Journal of Economics*, vol. 110, no. 3, 1 Aug. 1995, pp. 769–798, academic.oup.com/qje/article-abstract/110/3/769/1859259, https://doi.org/10.2307/2946699.
+
+Camacho, Luis. *Testing Selectorate Theory: Local Government Recall Elections and Political Survival Strategies in Peru*. Vol. 312, Oct. 2018, pp. 759–4000, www.norc.org/content/dam/norc-org/pdfs/WP-2018-002.pdf.
+
+Canes-Wrone, Brandice, et al. “Leadership and Pandering: A Theory of Executive Policymaking.” *American Journal of Political Science*, vol. 45, no. 3, July 2001, p. 532, https://doi.org/10.2307/2669237.
+
+de Benedictis-Kessner, Justin. “How Attribution Inhibits Accountability: Evidence from Train Delays.” *The Journal of Politics*, vol. 80, no. 4, Oct. 2018, pp. 1417–1422, www.journals.uchicago.edu/doi/10.1086/698754, https://doi.org/10.1086/698754.
+
+Federal Transit Administration. “National Transit Database (NTD) Glossary | FTA.” *Dot.gov*, www.transit.dot.gov/ntd/national-transit-database-ntd-glossary\#C:\~:text=onboard%20the%20vehicles.-.
+
+Khalifeh, Ramsey. “Rep. Hakeem Jeffries Calls NYC Congestion Pricing Pause “Reasonable.”” Gothamist, 5 Aug. 2024, gothamist.com/news/rep-hakeem-jeffries-calls-nyc-congestion-pricing-pause-reasonable.
+
+Ley, Ana, and Winnie Hu. “Hochul Brings Back Congestion Pricing Plan at \$9 Rate instead of \$15.” The New York Times, 14 Nov. 2024, www.nytimes.com/2024/11/14/nyregion/congestion-pricing-nyc-hochul.html.
+
+New Jersey Election Law Enforcement Commission. “White Paper Number 30: Recall Election in New Jersey- Citizens Safety Valve or Empty Threat?” *Njstatelib.org*, Trenton, N.J. : The Commission, Mar. 2023, dspace.njstatelib.org/items/a0409567-1ad6-4fc0-ac67-c6e84a13c6d5.
+
+Pulejo, Massimo, and Pablo Querubín. “Electoral Concerns Reduce Restrictive Measures during the COVID-19 Pandemic.” *Journal of Public Economics*, 20 Mar. 2021, p. 104387, https://doi.org/10.1016/j.jpubeco.2021.104387.
+
+Siena Research Institute. *Hochul Job Approval & Favorability Ratings up a Little, Remain Negative; Only 33% of Voters Would Re-Elect Hochul, 57% Want “Someone Else”* . 10 Dec. 2024, pp. 208–211, sri.siena.edu/wp-content/uploads/2025/07/SNY-December-2024-Poll-Release-Final\_UpdatedMethodology.pdf.
+
+Tabuchi, Hiroko. “How the Koch Brothers Are Killing Public Transit Projects around the Country.” *The New York Times*, 19 June 2018, www.nytimes.com/2018/06/19/climate/koch-brothers-public-transit.html.
+
+“The Tough Job of Being Mayor.” *Estes Park News*, 28 Oct. 2015, www.estesparknews.com/featured\_articles/article\_a60b2d48-7cf2-11e5-b1a4-2356442f9bdb.html.
+
+[^1]:  Capital spending is defined by the Federal Transit Administration as “expenses related to the purchase of capital equipment and financing capital projects” (Federal Transit Administration).
+
+[^2]:  Furthermore, Governor Hochul had already delayed implementing congestion pricing, with the support of House Minority Leader Hakeem Jeffries, as the 2024 general elections loomed (Khalifeh). The policy was declared suspended, and then reinstated just days after the elections were held (Ley and Hu).
+
+[^3]: When a city files petitions in more than one year, the treatment indicator equals one in each of those filing years.
+
+
+

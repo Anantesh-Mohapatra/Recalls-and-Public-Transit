@@ -1,0 +1,347 @@
+---
+title: "Stage 1a: Scrape Ballotpedia recall pages (HTML cache)"
+---
+
+```{r}
+#| label: purpose-block
+#| include: false
+# =============================================================================
+# Purpose : Scrape all mayoral recall attempts from Ballotpedia (2014-2024)
+# Inputs  : Ballotpedia HTML pages (fetched from web OR read from disk cache)
+# Outputs : data/raw/ballotpedia/html/YEAR.html            (year summary cache)
+#           data/raw/ballotpedia/html/<RecallName>.html    (individual page cache)
+# =============================================================================
+```
+
+## Setup
+
+```{r}
+#| label: load-packages
+library(tidyverse)
+library(rvest)        # HTML parsing
+library(httr2)        # HTTP requests
+library(here)         # Portable file paths
+
+here::i_am("_quarto.yml")   # Anchor here() to project root
+
+dir.create(here("data", "raw", "ballotpedia", "html"), recursive = TRUE, showWarnings = FALSE)
+```
+
+## Step 1: robots.txt Verification
+
+Ballotpedia's `robots.txt` does not disallow `/Political_recall_efforts,_*`, so
+the recall pages may be scraped. (Verified manually.)
+
+## Step 2: Fetch/Cache Helper
+
+```{r}
+#| label: fetch-helper
+# User-Agent identifying the scraper as academic research.
+ua_string <- paste0(
+  "Mozilla/5.0 (compatible; AcademicResearchBot/1.0; ",
+  "BPE Thesis - Transit Spending Study)"
+)
+
+# fetch_or_cache(): reads from disk if cached, otherwise fetches and saves.
+fetch_or_cache <- function(url, cache_path, delay = 2) {
+
+  if (file.exists(cache_path)) {
+    message("  [CACHE] ", basename(cache_path))
+    return(readLines(cache_path, warn = FALSE, encoding = "UTF-8"))
+  }
+
+  message("  [FETCH] ", url)
+
+  # httr2 builder pattern: request → modify → perform
+  resp <- request(url) |>
+    req_headers(`User-Agent` = ua_string) |>
+    req_options(ssl_verifypeer = 0L) |>
+    req_timeout(30) |>
+    req_retry(max_tries = 3) |>
+    req_perform()
+
+  # Split response body into lines before writing (preserves encoding).
+  lines <- strsplit(resp_body_string(resp), "\n", fixed = TRUE)[[1]]
+  writeLines(lines, cache_path)
+  message("  [SAVED] ", basename(cache_path))
+
+  Sys.sleep(delay)   # Polite delay between requests
+  lines
+}
+```
+
+## Step 3: Build URLs (2014-2024)
+
+```{r}
+#| label: build-urls
+# URL pattern: https://ballotpedia.org/Political_recall_efforts,_YEAR
+# (NOT /wiki/United_States_recall_elections,_YEAR – that returns 404)
+
+years <- 2014:2024
+base_url <- "https://ballotpedia.org/Political_recall_efforts,_"
+urls <- paste0(base_url, years)
+
+tibble(year = years, url = urls) |>
+  knitr::kable(caption = "Ballotpedia summary page URLs") |>
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Step 4: Extract Mayoral Recall Links from Summary Pages
+
+```{r}
+#| label: extract-mayor-links
+# Ballotpedia summary pages are organized as:
+#   <h1><span class="mw-headline" id="Mayors/presidents">Mayors/presidents</span></h1>
+#   <ul>
+#     <li><a href="/Official_Name_recall,_City,_State_(Year)">...</a></li>
+#     ...
+#   </ul>
+#   <h1><span id="School_boards">...</h1>   <- next section
+#
+# IMPORTANT page structure notes:
+#   - Section headings are <h1> (not <h2> as you'd expect for subsections)
+#   - The id is literally "Mayors/presidents" (slash is valid but unusual in IDs)
+#   - Data is in <ul><li> links, NOT in <table> elements
+#
+# XPath selects all <a> elements in <ul> lists that follow the
+# Mayors/presidents h1 heading and come before the next h1 heading.
+# "following-sibling" traverses siblings in document order.
+
+extract_mayor_links <- function(html_doc) {
+
+  # XPath explanation (equivalent to "all <a> under <ul> after the Mayors h1"):
+  #   //h1[.//span[@id='Mayors/presidents']]   = the Mayors h1
+  #   /following-sibling::ul[1]                = first <ul> immediately after it
+  #   //a                                      = all <a> inside that ul
+
+  links <- html_doc |>
+    html_elements(xpath = "//h1[.//span[@id='Mayors/presidents']]/following-sibling::ul[1]//a")
+
+  if (length(links) == 0) {
+    # Fallback: if XPath misses (page structure varied that year), use label filter.
+    # Catches links with "mayor" or "president" in their label text or href.
+    message("  [WARN] Mayors/presidents section not found via XPath – using label fallback.")
+    all_links <- html_doc |> html_elements("a[href]")
+    links <- all_links[
+      str_detect(html_attr(all_links, "href"),  "(?i)mayor|president") |
+      str_detect(html_text(all_links, trim=TRUE), "(?i)mayor|president")
+    ]
+  }
+
+  tibble(
+    href  = html_attr(links, "href"),
+    label = html_text(links, trim = TRUE)
+  ) |>
+    filter(
+      str_detect(href, "^/[A-Z]"),                              # Real article pages
+      !str_detect(href, "Category:|Special:|Ballotpedia:|#"),   # Not meta pages
+      str_detect(href, "(?i)recall")                            # Must be a recall page
+    ) |>
+    distinct(href, .keep_all = TRUE)
+}
+
+# ── Apply to all years ────────────────────────────────────────────────────
+message("Extracting mayoral recall links for ", length(years), " years...")
+
+links_by_year <- purrr::map2(
+  years, urls,
+  function(yr, url) {
+    message("Year ", yr, ":")
+    cache_path <- here("data", "raw", "ballotpedia", "html", paste0(yr, ".html"))
+    html_lines <- fetch_or_cache(url, cache_path, delay = 2)
+    html_doc   <- read_html(paste(html_lines, collapse = "\n"))
+    links      <- extract_mayor_links(html_doc)
+    links |> mutate(year = yr)
+  }
+)
+names(links_by_year) <- as.character(years)
+
+# Stack all years' links.
+all_mayor_links <- bind_rows(links_by_year)
+
+cat("\n=== Links per year ===\n")
+all_mayor_links |>
+  count(year, name = "n_links") |>
+  mutate(flag = ifelse(n_links == 0, "WARNING: Zero links – check page structure", "OK")) |>
+  knitr::kable(caption = "Mayoral recall links found per year") |>
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Step 5: Scrape Individual Recall Pages
+
+```{r}
+#| label: scrape-individual-pages
+# For each individual recall page, extract:
+# (A) Structured fields from the URL: official name, city, state, filing year
+#     URL format: /Official_Name_recall,_City,_State_(Year)
+# (B) Outcome from wgCategories JSON embedded in the page's <script> block
+#
+# wgCategories is the cleanest outcome source: the MediaWiki page category
+# list, which Ballotpedia maintains consistently. The category names map to
+# the four outcomes:
+#   "Recall, did not go to a vote" → Did Not Make Ballot
+#   "Recall won"                    → Removed
+#   "Recall lost"                   → Defeated
+#   (resigned before vote)          → Resigned  (inferred from category text)
+
+# Map Ballotpedia categories to outcome codes.
+parse_outcome_from_categories <- function(cats) {
+  dplyr::case_when(
+    any(str_detect(cats, "(?i)recalled and removed|Recall won|removed from office")) ~ "Removed",
+    any(str_detect(cats, "(?i)resigned"))                                             ~ "Resigned",
+    any(str_detect(cats, "(?i)Recall lost|recall defeated|not removed"))              ~ "Defeated",
+    any(str_detect(cats, "(?i)did not go to a vote"))                                 ~ "Did Not Make Ballot",
+    any(str_detect(cats, "(?i)Unsuccessful"))                                         ~ "Did Not Make Ballot",
+    TRUE                                                                               ~ "Unknown"
+  )
+}
+
+# Scrape one individual recall page.
+scrape_individual_page <- function(href, delay = 1.5) {
+
+  # Build a filesystem-safe cache filename from the URL path.
+  safe_name  <- str_replace_all(basename(href), "[^A-Za-z0-9._-]", "_")
+  cache_path <- here("data", "raw", "ballotpedia", "html", paste0(safe_name, ".html"))
+
+  lines <- fetch_or_cache(paste0("https://ballotpedia.org", href), cache_path, delay = delay)
+  src   <- paste(lines, collapse = " ")   # Flat string for regex
+
+  # ── Extract wgCategories from embedded JS ─────────────────────────────
+  # The page contains a JS block like:
+  #   RLCONF={"wgCategories":["Recall, Missouri","Recall, 2020", ...], ...}
+  # Extract the category array with a regex.
+  cats_match <- str_extract(src, '"wgCategories":\\[[^\\]]+\\]')
+  cats <- if (!is.na(cats_match)) {
+    str_extract_all(cats_match, '"([^"]+)"')[[1]] |>
+      str_remove_all('"') |>
+      (\(x) x[x != "wgCategories"])()   # Remove the key name itself
+  } else {
+    character(0)
+  }
+
+  # ── Parse URL for structured fields ───────────────────────────────────
+  # URL format examples:
+  #   /Quinton_Lucas_recall,_Kansas_City,_Missouri_(2020)
+  #   /Mayor_and_city_council_recall,_Westminster,_California_(2020)
+  url_body     <- str_remove(href, "^/")
+  official_raw <- url_body |>
+    str_extract("^[^,]+") |>
+    str_remove("_recall$") |>
+    str_replace_all("_", " ")
+  after_comma   <- str_extract(url_body, "(?<=recall,_).+$")
+  year_raw      <- str_extract(after_comma, "(?<=\\()([0-9]{4})")
+  location_part <- str_remove(after_comma, "_\\([0-9-]+\\).*$")
+  loc_parts     <- str_split(location_part, ",_")[[1]]
+  city_raw      <- str_replace_all(loc_parts[1], "_", " ")
+  state_raw     <- if (length(loc_parts) >= 2)
+    str_replace_all(loc_parts[length(loc_parts)], "_", " ")
+  else
+    NA_character_
+
+  tibble(
+    href        = href,
+    official    = official_raw,
+    city        = city_raw,
+    state       = state_raw,
+    filing_year = as.integer(year_raw),
+    outcome     = parse_outcome_from_categories(cats),
+    categories  = paste(cats, collapse = "; ")
+  )
+}
+
+# ── Apply to all links ─────────────────────────────────────────────────────
+message("Scraping ", nrow(all_mayor_links), " individual recall pages...")
+message("(2-second delay between requests; estimated time: ",
+        round(nrow(all_mayor_links) * 2 / 60, 1), " minutes)")
+
+recalls_raw <- purrr::map_dfr(
+  all_mayor_links$href,
+  scrape_individual_page,
+  delay = 2   # 2-second delay between individual page requests (polite)
+)
+```
+
+## Step 6: Audit Checks
+
+### 6a – Record Count Per Year
+
+```{r}
+#| label: audit-count-per-year
+count_by_year <- recalls_raw |>
+  count(filing_year, name = "n_records") |>
+  mutate(
+    flag = case_when(
+      n_records == 0  ~ "ERROR: Zero records",
+      n_records < 3   ~ "WARNING: Very few records",
+      TRUE            ~ "OK"
+    )
+  )
+
+count_by_year |>
+  knitr::kable(caption = "Mayoral recall records per year") |>
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+### 6b – Outcome Distribution
+
+```{r}
+#| label: audit-outcomes
+recalls_raw |>
+  count(outcome, sort = TRUE) |>
+  mutate(pct = scales::percent(n / sum(n), accuracy = 0.1)) |>
+  knitr::kable(caption = "Recall outcome distribution (all years)") |>
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+### 6c – Spot-Check Known Recalls
+
+```{r}
+#| label: audit-spotcheck
+# Verify that known recalls appear correctly.
+known <- tribble(
+  ~city,         ~state,       ~year, ~expected_outcome,      ~note,
+  "Kansas City", "Missouri",   2020,  "Did Not Make Ballot",  "Quinton Lucas – didn't get enough signatures",
+  "Los Angeles", "California", 2020,  "Did Not Make Ballot",  "Eric Garcetti – did not advance",
+  "Seattle",     "Washington", 2020,  "Did Not Make Ballot",  "Jenny Durkan 2020 attempt"
+)
+
+for (i in seq_len(nrow(known))) {
+  r   <- known[i, ]
+  hit <- recalls_raw |>
+    filter(str_detect(tolower(city), tolower(r$city)),
+           str_detect(state, r$state),
+           filing_year == r$year)
+  status <- if (nrow(hit) > 0) {
+    paste("FOUND – outcome:", hit$outcome[1],
+          if (hit$outcome[1] == r$expected_outcome) "[CORRECT]" else "[MISMATCH]")
+  } else "NOT FOUND"
+  cat(sprintf("  %s | %s, %s (%d): %s\n", status, r$city, r$state, r$year, r$note))
+}
+```
+
+### 6d – "Unknown" Outcomes
+
+```{r}
+#| label: audit-unknown-outcomes
+# Flag any records where the outcome couldn't be determined.
+# These need manual review – either the category regex needs updating,
+# or the Ballotpedia page uses non-standard categories.
+unknown_outcomes <- recalls_raw |> filter(outcome == "Unknown")
+cat("Records with Unknown outcome:", nrow(unknown_outcomes), "\n")
+if (nrow(unknown_outcomes) > 0) {
+  unknown_outcomes |>
+    select(official, city, state, filing_year, categories) |>
+    knitr::kable(caption = "Unknown outcomes – review categories to improve classifier") |>
+    kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+}
+```
+
+## Step 7: In-memory summary (no disk write)
+
+```{r}
+#| label: save-output
+# Scrape-only: this stage caches HTML; it writes no .rds.
+cat("In-memory recall records (this session):", nrow(recalls_raw), "\n")
+cat("Columns:", paste(names(recalls_raw), collapse = ", "), "\n")
+glimpse(recalls_raw)
+```

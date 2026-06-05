@@ -1,0 +1,102 @@
+---
+title: "Stage 1d: Collect NTD Operating Expenses raw data"
+execute:
+  cache: false
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : NTD Operating Expenses raw data for 2014-2024.
+# Sources :
+#   2014-2021: per-year .xlsx from FTA (transit.dot.gov)
+#   2022-2024: data.transportation.gov Socrata view i5ki-dc58
+# Outputs : file existence + integrity validation only (no R-side artifact)
+# =============================================================================
+```
+
+## Setup
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(here)
+here::i_am("_quarto.yml")
+ntd_dir <- here("data", "raw", "ntd")
+```
+
+## Source URLs (for reference / re-acquisition)
+
+```{r}
+#| label: url-table
+operating_urls <- tibble::tribble(
+  ~year, ~xlsx_url,
+  2014L, "https://www.transit.dot.gov/sites/fta.dot.gov/files/2014%20Operating%20Expense.xlsx",
+  2015L, "https://www.transit.dot.gov/sites/fta.dot.gov/files/2015_Operating_Expenses.xlsx",
+  2016L, "https://www.transit.dot.gov/sites/fta.dot.gov/files/2016%20Operating%20Expenses.xlsx",
+  2017L, "https://www.transit.dot.gov/sites/fta.dot.gov/files/2017%20Operating%20Expenses.xlsx",
+  2018L, "https://www.transit.dot.gov/sites/fta.dot.gov/files/2018%20Operating%20Expenses.xlsx",
+  2019L, "https://www.transit.dot.gov/sites/fta.dot.gov/files/2020-10/2019%20Operating%20Expenses.xlsx",
+  2020L, "https://www.transit.dot.gov/sites/fta.dot.gov/files/2021-11/2020%20Operating%20Expenses_0.xlsx",
+  2021L, "https://www.transit.dot.gov/sites/fta.dot.gov/files/2022-10/2021%20Operating%20Expenses.xlsx"
+)
+
+socrata_url <- "https://data.transportation.gov/resource/i5ki-dc58.csv?$limit=500000"
+
+operating_urls |>
+  knitr::kable(caption = "FTA Operating Expenses xlsx URLs (2014-2021)") |>
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## File integrity validation
+
+```{r}
+#| label: integrity
+validate_xlsx <- function(path) {
+  if (!file.exists(path)) return(list(status = "MISSING", bytes = NA_integer_, magic = NA_character_))
+  bytes <- file.info(path)$size
+  fh <- file(path, "rb"); on.exit(close(fh))
+  hdr <- readBin(fh, what = "raw", n = 4)
+  magic <- paste(format(hdr), collapse = "-")
+  list(status = if (magic == "50-4b-03-04") "OK" else "BAD_MAGIC",
+       bytes = bytes, magic = magic)
+}
+
+xlsx_check <- operating_urls |>
+  mutate(
+    path  = file.path(ntd_dir, sprintf("operating_expenses_%d.xlsx", year)),
+    info  = map(path, validate_xlsx),
+    status = map_chr(info, "status"),
+    bytes  = map_int(info, "bytes"),
+    magic  = map_chr(info, "magic")
+  ) |>
+  select(year, path = path, status, bytes, magic)
+
+xlsx_check |>
+  mutate(path = basename(path)) |>
+  knitr::kable(caption = "xlsx integrity check") |>
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+if (any(xlsx_check$status != "OK")) {
+  stop("One or more operating xlsx files missing or invalid. Re-acquire from the URLs above.")
+}
+```
+
+```{r}
+#| label: socrata-check
+socrata_path <- file.path(ntd_dir, "ntd_operating_socrata_raw.csv")
+if (!file.exists(socrata_path)) {
+  cat("[DOWNLOAD] Fetching Socrata operating data...\n")
+  resp <- httr2::request(socrata_url) |>
+    httr2::req_options(ssl_verifypeer = 0L) |>
+    httr2::req_headers("User-Agent" = "Mozilla/5.0 Recalls-Thesis") |>
+    httr2::req_timeout(300) |>
+    httr2::req_retry(max_tries = 3) |>
+    httr2::req_perform()
+  writeBin(httr2::resp_body_raw(resp), socrata_path)
+}
+cat(sprintf("Socrata operating CSV: %s (%.1f KB)\n",
+            basename(socrata_path), file.info(socrata_path)$size / 1024))
+```
+

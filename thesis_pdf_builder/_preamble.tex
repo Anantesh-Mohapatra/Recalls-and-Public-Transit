@@ -1,0 +1,73 @@
+% =============================================================================
+% LaTeX header for the thesis PDF build (pulled in via include-in-header).
+% Provides the packages the pipeline's saved tables need, plus thesis styling:
+% new page per major section, page-number footer, caption appearance. Line
+% spacing and block paragraphs are locked in _frontmatter.tex (after the TOC).
+% =============================================================================
+
+% --- tables from the pipeline ---
+\usepackage{booktabs}
+\usepackage{threeparttable}   % kableExtra footnote(threeparttable = TRUE)
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{tabularray}       % modelsummary / tinytable (talltblr)
+\UseTblrLibrary{booktabs}
+\UseTblrLibrary{siunitx}
+\newcommand{\tinytableTabularrayUnderline}[1]{\underline{#1}}
+\newcommand{\tinytableTabularrayStrikeout}[1]{\sout{#1}}
+\NewTableCommand{\tinytableDefineColor}[3]{\definecolor{#1}{#2}{#3}}
+
+% --- figures / floats ---
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{adjustbox}        % shrink an over-wide table to the text width
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.9}
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\floatpagefraction}{0.85}
+\setcounter{topnumber}{3}
+\setcounter{totalnumber}{5}
+
+% --- misc ---
+\usepackage[normalem]{ulem}
+\usepackage{xurl}             % break long URLs in the bibliography
+\setlength{\emergencystretch}{3em}
+
+% --- thesis styling ---
+\usepackage{setspace}
+\usepackage{caption}
+\captionsetup{font=small,justification=raggedright,singlelinecheck=false}
+% Center figure and table captions over their (centered) artifact, so the
+% kableExtra table titles align with the table instead of the page margin
+% (matching the tabularray regression-table captions, which already center).
+\captionsetup[figure]{justification=centering,singlelinecheck=false}
+\captionsetup[table]{justification=centering,singlelinecheck=false}
+
+% Major (level-1) sections start on a new page. A \clearpage also flushes any
+% pending floats, so a section's tables/figures never drift into the next.
+\let\oldsection\section
+\renewcommand{\section}{\clearpage\oldsection}
+
+% Page number only, centered at the bottom; no running header.
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Render the Unicode math symbols that appear literally in the prose
+% (Greek letters and subscript digits) without altering the source text.
+\usepackage{newunicodechar}
+\newunicodechar{α}{\ensuremath{\alpha}}
+\newunicodechar{β}{\ensuremath{\beta}}
+\newunicodechar{γ}{\ensuremath{\gamma}}
+\newunicodechar{δ}{\ensuremath{\delta}}
+\newunicodechar{ε}{\ensuremath{\epsilon}}
+\newunicodechar{τ}{\ensuremath{\tau}}
+\newunicodechar{×}{\ensuremath{\times}}
+\newunicodechar{₀}{\textsubscript{0}}
+\newunicodechar{₁}{\textsubscript{1}}
+\newunicodechar{₂}{\textsubscript{2}}
+\newunicodechar{₃}{\textsubscript{3}}
+\newunicodechar{§}{\S}

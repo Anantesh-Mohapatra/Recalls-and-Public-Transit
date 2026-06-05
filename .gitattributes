@@ -1,0 +1,6 @@
+# Raw and cached data (Ballotpedia HTML scrape, NTD/Census source files) is not
+# project code; exclude it from GitHub's language statistics.
+data/** linguist-vendored
+
+# Count Quarto source files as R for language detection.
+*.qmd linguist-language=R linguist-detectable=true

@@ -1,0 +1,53 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+caption={Model A event-study across coverage tiers},
+note{}={* p \num{< 0.1}, ** p \num{< 0.05}, *** p \num{< 0.01}},
+note{ }={Event-study coefficients on log(transit capital + 1). Reference period t = -1. Window endpoints are binned.},
+note{  }={Agency-city and year fixed effects. Standard errors clustered by city.},
+note{   }={EXT: agency matched by headquarters, service-area place, or service-area county. HQ: agency headquartered in the city. REST: agency both headquartered in and serving the city.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]Q[]},
+hline{2}={1-4}{solid, black, 0.05em},
+hline{26}={1-4}{solid, black, 0.05em},
+hline{1}={1-4}{solid, black, 0.08em},
+hline{34}={1-4}{solid, black, 0.08em},
+column{2-4}={}{halign=c},
+column{1}={}{halign=l},
+}                     %% tabularray inner close
+& EXT & HQ & REST \\
+t = -5 & \num{0.210} & \num{0.013} & \num{-0.358}** \\
+& (\num{0.166}) & (\num{0.333}) & (\num{0.174}) \\
+t = -4 & \num{0.035} & \num{0.106} & \num{-1.141} \\
+& (\num{0.214}) & (\num{0.508}) & (\num{0.727}) \\
+t = -3 & \num{0.103} & \num{-0.199} & \num{-0.721}*** \\
+& (\num{0.168}) & (\num{0.458}) & (\num{0.240}) \\
+t = -2 & \num{0.001} & \num{-0.187} & \num{-1.172}*** \\
+& (\num{0.163}) & (\num{0.398}) & (\num{0.363}) \\
+t = 0 & \num{0.188} & \num{-0.098} & \num{-0.832}*** \\
+& (\num{0.150}) & (\num{0.398}) & (\num{0.242}) \\
+t = 1 & \num{0.225} & \num{0.756} & \num{-0.136} \\
+& (\num{0.205}) & (\num{0.521}) & (\num{0.267}) \\
+t = 2 & \num{0.046} & \num{0.577} & \num{-1.785}*** \\
+& (\num{0.188}) & (\num{0.826}) & (\num{0.293}) \\
+t = 3 & \num{0.161} & \num{0.623} & \num{-1.434}*** \\
+& (\num{0.176}) & (\num{0.911}) & (\num{0.309}) \\
+t = 4 & \num{0.247} & \num{1.312} & \num{-0.222} \\
+& (\num{0.162}) & (\num{0.927}) & (\num{0.351}) \\
+t = 5 & \num{0.138} & \num{0.269} & \num{-0.467} \\
+& (\num{0.140}) & (\num{0.647}) & (\num{0.425}) \\
+log(pop density) & \num{-0.119} & \num{1.456} & \num{0.183} \\
+& (\num{0.203}) & (\num{1.358}) & (\num{1.680}) \\
+Unemployment rate & \num{0.024} & \num{-0.002} & \num{0.020} \\
+& (\num{0.015}) & (\num{0.043}) & (\num{0.049}) \\
+Num.Obs. & \num{7142} & \num{1220} & \num{702} \\
+R2 & \num{0.844} & \num{0.857} & \num{0.843} \\
+R2 Adj. & \num{0.816} & \num{0.828} & \num{0.815} \\
+R2 Within & \num{0.001} & \num{0.011} & \num{0.009} \\
+R2 Within Adj. & \num{-0.001} & \num{-0.000} & \num{-0.011} \\
+Std.Errors & by: city\_id & by: city\_id & by: city\_id \\
+FE: agency\_city & X & X & X \\
+FE: year & X & X & X \\
+\end{talltblr}
+\end{table}

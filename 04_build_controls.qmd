@@ -1,0 +1,365 @@
+---
+title: "Stage 4: Build controls – density, unemployment"
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Build a city-year control panel for the recall-active cities
+#           across 2014-2024.
+#
+# Sources :
+#   Population density  – Census Population Estimates Program (PEP) via tidycensus
+#                         True annual estimates (not 5-year smoothed). Combined
+#                         from Vintage 2019 (years 2014-2019) + Vintage 2024
+#                         (years 2020-2024).
+#                         land area: tigris::places() ALAND attribute (sq mi)
+#   Unemployment        – BLS LAUS flat file `la.data.64.County`
+#                         (annual averages, period M13; county-level)
+#
+# Inputs  : data/cleaned/recalls_clean.rds
+# Outputs : data/cleaned/controls.rds       (city × year × controls)
+# =============================================================================
+```
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(tidycensus)
+library(tigris)
+library(here)
+library(httr2)
+options(tigris_use_cache = TRUE)
+here::i_am("_quarto.yml")
+source(here("R", "std_city.R"))
+
+recalls <- readRDS(here("data", "cleaned", "recalls_clean.rds"))
+
+cities <- recalls |>
+  distinct(city_id, city, city_std, state, state_std) |>
+  mutate(state_abb = state.abb[match(state, state.name)],
+         state_abb = if_else(state == "District of Columbia", "DC", state_abb))
+
+cat("Cities to build controls for:", nrow(cities), "across",
+    n_distinct(cities$state), "states\n")
+```
+
+## Part A – Population (Census PEP, true annual)
+
+```{r}
+#| label: pep-fetch
+#| cache: true
+# PEP is published in vintages. Each vintage gives multiple years of annual
+# estimates. Strategy: use Vintage 2019 for 2014-2019, Vintage 2024 for 2020-2024
+# (V2024 supersedes earlier estimates for overlapping years). Combined: true
+# annual estimates 2014-2024 – no 5-year smoothing.
+
+target_states <- unique(cities$state_abb)
+
+fetch_v19 <- function(st) {
+  tryCatch({
+    get_estimates(geography = "place", state = st, product = "population",
+                  vintage = 2019, year = 2019, time_series = TRUE,
+                  show_call = FALSE) |>
+      filter(variable == "POP", DATE %in% 7:12) |>
+      mutate(state_abb = st,
+             acs_year  = 2014L + (DATE - 7L)) |>
+      select(GEOID, NAME, state_abb, acs_year, pop = value)
+  }, error = function(e) { message("V2019 ", st, ": ", conditionMessage(e)); tibble() })
+}
+
+fetch_v24 <- function(st) {
+  tryCatch({
+    get_estimates(geography = "place", state = st, variables = "POPESTIMATE",
+                  vintage = 2024, time_series = TRUE,
+                  show_call = FALSE) |>
+      filter(year >= 2020, year <= 2024) |>
+      mutate(state_abb = st) |>
+      select(GEOID, NAME, state_abb, acs_year = year, pop = value)
+  }, error = function(e) { message("V2024 ", st, ": ", conditionMessage(e)); tibble() })
+}
+
+acs_raw <- bind_rows(map_dfr(target_states, fetch_v19),
+                     map_dfr(target_states, fetch_v24))
+
+cat("PEP raw rows:", nrow(acs_raw),
+    " | unique places:", n_distinct(acs_raw$GEOID),
+    " | years:", paste(sort(unique(acs_raw$acs_year)), collapse=","), "\n")
+```
+
+```{r}
+#| label: pep-parse
+# Parse city name from PEP NAME field.
+acs_parsed <- acs_raw |>
+  mutate(
+    place_name = NAME |> str_remove(",\\s*[A-Za-z ]+$"),
+    city_std   = std_city(place_name),
+    state_std  = cities$state_std[match(state_abb, cities$state_abb)]
+  ) |>
+  select(GEOID, place_name, city_std, state_abb, state_std, acs_year, pop)
+```
+
+```{r}
+#| label: acs-land-area
+#| cache: true
+# Pull ALAND from tigris places() for BOTH 2020 and 2023 vintages.
+# Reason: Census occasionally reclassifies places (e.g., Easthampton MA went from
+# GEOID 2519370 "Easthampton Town city" in 2020 to 2519365 "Easthampton city" in
+# 2023). PEP V2019 uses the old GEOID; V2024 uses the new one. Pulling both
+# vintages ensures aland joins successfully regardless of vintage.
+pull_aland <- function(yr) {
+  target_states |>
+    map_dfr(\(st) {
+      tryCatch({
+        places(state = st, year = yr, progress_bar = FALSE) |>
+          as_tibble() |>
+          transmute(GEOID = as.character(GEOID),
+                    aland_sqmi = as.numeric(ALAND) / 2589988.11)
+      }, error = function(e) { message("tigris ", yr, " ", st); tibble() })
+    })
+}
+
+aland_2020 <- pull_aland(2020)
+aland_2023 <- pull_aland(2023)
+aland_2024 <- pull_aland(2024)
+
+# Union, keeping one row per GEOID (most recent vintage wins where overlap)
+aland <- bind_rows(aland_2024, aland_2023, aland_2020) |>
+  group_by(GEOID) |> slice(1) |> ungroup()
+
+cat("Land area rows: 2020 =", nrow(aland_2020),
+    " | 2023 =", nrow(aland_2023),
+    " | 2024 =", nrow(aland_2024),
+    " | union =", nrow(aland), "\n")
+```
+
+```{r}
+#| label: acs-density
+density <- acs_parsed |>
+  left_join(aland, by = "GEOID") |>
+  mutate(pop_density = pop / aland_sqmi)
+```
+
+```{r}
+#| label: acs-match
+# Match ACS places to recall cities on (city_std, state_std).
+# One city_id may match multiple GEOIDs (e.g., "Springfield" in multiple counties)
+# – resolve by picking the largest by population.
+density_direct <- cities |>
+  inner_join(density, by = c("city_std", "state_std"),
+             relationship = "many-to-many") |>
+  group_by(city_id, acs_year) |>
+  slice_max(pop, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  select(city_id, year = acs_year, pop, pop_density, aland_sqmi, geoid = GEOID)
+
+# Fuzzy fallback for cities that didn't match directly (e.g., "Boise" vs ACS's
+# "Boise City"; townships and consolidated city-counties).
+unmatched_cities <- cities |> anti_join(density_direct |> distinct(city_id), by = "city_id")
+suppressPackageStartupMessages(library(stringdist))
+
+# For each unmatched recall city, pick the nearest ACS place name within the
+# same state (Jaro-Winkler >= 0.92). Map yields city_id → GEOID.
+fuzzy_xwalk <- map_dfr(seq_len(nrow(unmatched_cities)), function(i) {
+  rc <- unmatched_cities[i, ]
+  pool <- density |> filter(state_std == rc$state_std) |>
+                     distinct(GEOID, city_std)
+  if (nrow(pool) == 0) return(tibble())
+  scores <- 1 - stringdist::stringdist(rc$city_std, pool$city_std, method = "jw", p = 0.1)
+  best <- which.max(scores)
+  if (length(best) && scores[best] >= 0.92) {
+    tibble(city_id = rc$city_id, geoid = pool$GEOID[best],
+           match_score = scores[best])
+  } else tibble()
+})
+cat("Fuzzy xwalk hits:", nrow(fuzzy_xwalk), "\n")
+
+fuzzy_density <- fuzzy_xwalk |>
+  inner_join(density |> rename(geoid = GEOID), by = "geoid") |>
+  group_by(city_id, acs_year) |>
+  slice_max(pop, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  select(city_id, year = acs_year, pop, pop_density, aland_sqmi, geoid)
+
+density_matched <- bind_rows(density_direct, fuzzy_density)
+
+# Third pass: cases where the recall-side standardizer over-stripped a
+# trailing "City" that's actually part of the place's official name
+# (Boise City, Kansas City, Oregon City, Traverse City, David City, Sioux
+# City, etc.). Try matching the recall city_std with " city" appended.
+unmatched3 <- cities |> anti_join(density_matched |> distinct(city_id), by = "city_id")
+recover_city <- unmatched3 |>
+  mutate(city_std = paste(city_std, "city")) |>           # mutate the join key
+  inner_join(density, by = c("city_std", "state_std"),
+             relationship = "many-to-many") |>
+  group_by(city_id, acs_year) |>
+  slice_max(pop, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  select(city_id, year = acs_year, pop, pop_density, aland_sqmi, geoid = GEOID)
+cat("Recovery pass (' city' appended) hits:",
+    n_distinct(recover_city$city_id), "cities\n")
+
+# Fourth pass: hand-coded special cases (consolidated city-counties etc.)
+manual_xwalk <- tribble(
+  ~city_id,                  ~geoid,
+  "nashville|tennessee",     "4752006"   # Nashville-Davidson metro govt (balance)
+)
+recover_manual <- manual_xwalk |>
+  inner_join(density, by = c("geoid" = "GEOID")) |>
+  group_by(city_id, acs_year) |>
+  slice_max(pop, n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  select(city_id, year = acs_year, pop, pop_density, aland_sqmi, geoid)
+cat("Manual xwalk hits:", n_distinct(recover_manual$city_id), "cities\n")
+
+density_matched <- bind_rows(density_matched, recover_city, recover_manual)
+
+cat("Matched ACS coverage – direct:", n_distinct(density_direct$city_id),
+    " + fuzzy:", n_distinct(fuzzy_density$city_id),
+    " = total:", n_distinct(density_matched$city_id), "/", nrow(cities), "\n")
+cat("City-year rows:", nrow(density_matched), "\n")
+```
+
+## Part B – Unemployment (BLS LAUS county-level)
+
+```{r}
+#| label: bls-download
+#| cache: true
+# BLS LAUS 'la.data.64.County' file contains all series, all periods.
+# Annual average = period "M13". series_id starts with "LAUCN" for county unemployment rate.
+bls_url <- "https://download.bls.gov/pub/time.series/la/la.data.64.County"
+bls_path <- here("data", "raw", "bls", "la.data.64.County.txt")
+dir.create(dirname(bls_path), recursive = TRUE, showWarnings = FALSE)
+
+if (!file.exists(bls_path)) {
+  req <- request(bls_url) |>
+    req_headers(`User-Agent` = "BPE thesis research") |>
+    req_options(ssl_verifypeer = 0L)
+  resp <- req_perform(req)
+  writeBin(resp_body_raw(resp), bls_path)
+}
+cat("BLS file size (MB):", round(file.info(bls_path)$size / 1e6, 1), "\n")
+```
+
+```{r}
+#| label: bls-parse
+bls_raw <- read_tsv(bls_path, col_types = cols(.default = "c")) |>
+  rename_with(\(x) str_trim(x))
+# Keep unemployment-rate series (measure code 03), annual (period M13), in 2014-2024
+bls_annual <- bls_raw |>
+  filter(
+    str_detect(series_id, "^LAUCN"),    # county-level
+    str_sub(series_id, -2L) == "03",    # unemployment rate
+    period == "M13",
+    year %in% as.character(2014:2024)
+  ) |>
+  mutate(
+    fips_state  = str_sub(series_id, 6, 7),
+    fips_county = str_sub(series_id, 8, 10),
+    fips        = paste0(fips_state, fips_county),
+    year        = as.integer(year),
+    unemp_rate  = suppressWarnings(as.numeric(value))
+  ) |>
+  select(fips, year, unemp_rate) |>
+  filter(!is.na(unemp_rate))
+
+cat("BLS annual county-year rows:", nrow(bls_annual), "\n")
+```
+
+```{r}
+#| label: city-county-xwalk
+#| cache: true
+# Map each recall city (GEOID, place) to its county FIPS via tigris.
+# Places can span multiple counties; use the place-county relationship file.
+# Simpler: use census Bureau's "place assignment" via tigris::counties intersection,
+# or use the 2020 Gazetteer Places-Counties crosswalk.
+# Practical shortcut: tigris::places() already has COUNTYFP but only for places
+# entirely in one county. For multi-county places, use the 2020 census place-county
+# relationship file.
+
+place_county_url <- "https://www2.census.gov/geo/docs/reference/codes2020/national_place_by_county2020.txt"
+pc_path <- here("data", "raw", "census", "national_place_by_county2020.txt")
+if (!file.exists(pc_path)) {
+  req <- request(place_county_url) |>
+    req_headers(`User-Agent` = "BPE thesis") |>
+    req_options(ssl_verifypeer = 0L)
+  resp <- req_perform(req)
+  writeBin(resp_body_raw(resp), pc_path)
+}
+
+# County Subdivision (MCD) -> County crosswalk. Same schema family as the
+# Place file; covers townships, NJ/PA boroughs, New England towns, etc.,
+# which the Place universe excludes.
+cousub_url <- "https://www2.census.gov/geo/docs/reference/codes2020/national_cousub2020.txt"
+cs_path <- here("data", "raw", "census", "national_cousub2020.txt")
+if (!file.exists(cs_path)) {
+  req <- request(cousub_url) |>
+    req_headers(`User-Agent` = "BPE thesis") |>
+    req_options(ssl_verifypeer = 0L)
+  resp <- req_perform(req)
+  writeBin(resp_body_raw(resp), cs_path)
+}
+
+# File: STATE|STATEFP|COUNTYFP|COUNTYNAME|PLACEFP|PLACENS|PLACENAME|TYPE|CLASSFP|FUNCSTAT
+# Each place may appear in multiple counties (one row per place-county pair).
+# We don't have area weights here; pick the first county listed per place.
+# (For multi-county places this is approximate; documenting as a known limitation.)
+pc <- read_delim(pc_path, delim = "|", col_types = cols(.default = "c"))
+pc_best <- pc |>
+  mutate(geoid = paste0(STATEFP, PLACEFP),
+         fips_county = paste0(STATEFP, COUNTYFP)) |>
+  group_by(geoid) |>
+  slice(1) |>
+  ungroup() |>
+  select(geoid, fips_county)
+
+cat("Place-county crosswalk rows:", nrow(pc_best), "\n")
+```
+
+```{r}
+#| label: unemp-match
+# Join: city_id -> geoid -> fips_county -> year -> unemp
+unemp_matched <- density_matched |>
+  distinct(city_id, geoid) |>
+  inner_join(pc_best, by = "geoid") |>
+  inner_join(bls_annual, by = c("fips_county" = "fips")) |>
+  select(city_id, year, fips_county, unemp_rate)
+
+cat("Unemployment rows matched:", nrow(unemp_matched), "\n")
+cat("Cities with >=1 unemp year:", n_distinct(unemp_matched$city_id), "\n")
+```
+
+## Assemble
+
+```{r}
+#| label: assemble
+controls <- density_matched |>
+  select(city_id, year, pop, pop_density, aland_sqmi) |>
+  left_join(unemp_matched |> select(city_id, year, unemp_rate),
+            by = c("city_id", "year"))
+
+cat("Years present in controls:",
+    paste(sort(unique(controls$year)), collapse=", "), "\n")
+cat("Unique cities in controls:", n_distinct(controls$city_id), "\n")
+cat("City-year rows:", nrow(controls), "\n")
+
+controls |>
+  summarise(
+    cities                 = n_distinct(city_id),
+    years                  = n_distinct(year),
+    pct_has_density        = round(100 * mean(!is.na(pop_density)), 1),
+    pct_has_unemp          = round(100 * mean(!is.na(unemp_rate)), 1),
+    median_pop_density     = round(median(pop_density, na.rm = TRUE), 0),
+    median_unemp_rate      = round(median(unemp_rate, na.rm = TRUE), 1)
+  ) |>
+  knitr::kable()
+```
+
+## Save
+
+```{r}
+#| label: save
+saveRDS(controls, here("data", "cleaned", "controls.rds"))
+cat("Wrote data/cleaned/controls.rds\n")
+```

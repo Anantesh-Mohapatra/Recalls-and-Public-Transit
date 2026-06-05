@@ -1,0 +1,693 @@
+---
+title: "Stage 6: Exploratory Data Analysis"
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Descriptive look at panel.rds before modeling. Coverage heatmap,
+#           outcome distributions, treated-vs-control time series, pooled
+#           pre-trend visualization. No causal inference here.
+# Inputs  : data/final/panel.rds
+# Outputs : Inline HTML; figures saved to output/figures/.
+# =============================================================================
+```
+
+## Setup
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(here)
+library(kableExtra)
+library(patchwork)
+here::i_am("_quarto.yml")
+
+panel <- readRDS(here("data", "final", "panel.rds"))
+
+dir.create(here("output", "figures"), recursive = TRUE, showWarnings = FALSE)
+dir.create(here("output", "tables"), recursive = TRUE, showWarnings = FALSE)
+
+theme_set(theme_minimal(base_size = 12) +
+          theme(plot.title    = element_text(face = "bold"),
+                plot.subtitle = element_text(color = "grey40")))
+
+palette_ab <- c("treated" = "#c0392b", "control" = "#2980b9")
+
+cat(sprintf("Panel: %d rows · %d cities · years %d–%d\n",
+            nrow(panel), n_distinct(panel$city_id),
+            min(panel$year), max(panel$year)))
+```
+
+---
+
+## Geographic distribution of recall petitions
+
+```{r}
+#| label: fig-recall-heatmap
+#| fig-cap: "Municipal recall petitions, 2014-2024, by county. Counties with no recall activity are unshaded. AK and HI shifted to insets."
+#| fig-width: 11
+#| fig-height: 6
+suppressPackageStartupMessages({
+  library(sf)
+  library(tigris)
+})
+options(tigris_use_cache = TRUE, tigris_class = "sf")
+source(here("R", "std_city.R"))
+
+recalls <- readRDS(here("data", "cleaned", "recalls_clean.rds"))
+
+# City -> county FIPS via the same Place + Cousub union 03c uses.
+state_abb <- tibble(abb = state.abb, name = tolower(state.name)) |>
+  add_row(abb = "DC", name = "district of columbia")
+
+build_xwalk <- function(path, name_col) {
+  readr::read_delim(path, delim = "|", show_col_types = FALSE) |>
+    janitor::clean_names() |>
+    left_join(state_abb, by = c("state" = "abb")) |>
+    transmute(
+      place_norm = std_city(.data[[name_col]]),
+      state_norm = coalesce(name, tolower(state)),
+      fips_county = paste0(statefp, countyfp)
+    )
+}
+
+pc <- build_xwalk(here("data","raw","census","national_place_by_county2020.txt"), "placename")
+cs <- build_xwalk(here("data","raw","census","national_cousub2020.txt"),         "cousubname")
+
+recalls_key <- recalls |>
+  mutate(city_norm  = std_city(city_std),
+         state_norm = str_to_lower(state_std))
+
+# Resolve each petition to a county: Place file first, Cousub fallback for
+# MCD-style municipalities (NJ townships, MI charter townships, etc.).
+matched_place <- recalls_key |>
+  inner_join(pc, by = c("city_norm" = "place_norm", "state_norm"),
+             relationship = "many-to-many")
+matched_cousub <- recalls_key |>
+  anti_join(pc, by = c("city_norm" = "place_norm", "state_norm")) |>
+  inner_join(cs, by = c("city_norm" = "place_norm", "state_norm"),
+             relationship = "many-to-many")
+
+petitions_by_county <- bind_rows(matched_place, matched_cousub) |>
+  count(fips_county, name = "n_petitions") |>
+  mutate(state_fp = substr(fips_county, 1, 2))
+
+n_excluded_unmatched <- nrow(recalls_key) - sum(petitions_by_county$n_petitions)
+n_excluded_akhi      <- sum(petitions_by_county$n_petitions[
+                              petitions_by_county$state_fp %in% c("02","15")])
+
+cat("Petitions resolved to a county:", sum(petitions_by_county$n_petitions),
+    "of", nrow(recalls_key), "\n")
+cat("Counties with at least one petition:", nrow(petitions_by_county), "\n")
+
+non_conus <- c("AK","HI","AS","GU","MP","PR","VI")
+
+counties_sf <- counties(cb = TRUE, year = 2020, progress_bar = FALSE) |>
+  filter(!STATE_NAME %in% c("Alaska","Hawaii","American Samoa","Guam",
+                            "Commonwealth of the Northern Mariana Islands",
+                            "Puerto Rico","United States Virgin Islands")) |>
+  mutate(fips_county = paste0(STATEFP, COUNTYFP)) |>
+  left_join(petitions_by_county, by = "fips_county")
+
+states_sf <- states(cb = TRUE, year = 2020, progress_bar = FALSE) |>
+  filter(!STUSPS %in% non_conus)
+
+ggplot() +
+  geom_sf(data = counties_sf, aes(fill = n_petitions),
+          color = "white", linewidth = 0.05) +
+  geom_sf(data = states_sf, fill = NA, color = "grey30", linewidth = 0.3) +
+  scale_fill_distiller(palette = "Reds", direction = 1, na.value = "grey92",
+                       name = "Petitions\nfiled",
+                       breaks = scales::pretty_breaks(4)) +
+  coord_sf(crs = 5070) +
+  labs(title    = "Municipal recall petitions, 2014-2024",
+       subtitle = "County-level counts, contiguous 48 states",
+       caption  = sprintf(paste0("Source: Ballotpedia Recall Reports. City→county via Census 2020 Place + Cousub crosswalks. ",
+                                 "Excluded: %d petitions in AK/HI, %d in cities not matched to a county."),
+                          n_excluded_akhi, n_excluded_unmatched)) +
+  theme_void(base_size = 12) +
+  theme(plot.title    = element_text(face = "bold"),
+        plot.subtitle = element_text(color = "grey40"),
+        legend.position = "right")
+
+ggsave(here("output", "figures", "fig_recall_heatmap.png"),
+       width = 11, height = 6, dpi = 150)
+```
+
+---
+
+## 1 – Sample membership
+
+```{r}
+#| label: tab-samples
+panel |>
+  summarise(
+    `Model A HQ (cities)`  = n_distinct(city_id[in_modelA_hq]),
+    `Model A ext (cities)` = n_distinct(city_id[in_modelA_ext]),
+    `Model B HQ (cities)`  = n_distinct(city_id[in_modelB_hq]),
+    `Model B ext (cities)` = n_distinct(city_id[in_modelB_ext]),
+    `Treated A HQ`         = n_distinct(city_id[in_modelA_hq & group_A == "treated"]),
+    `Control A HQ`         = n_distinct(city_id[in_modelA_hq & group_A == "control"])
+  ) |>
+  pivot_longer(everything(), names_to = "Sample", values_to = "N") |>
+  kable(caption = "City counts by sample membership") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r}
+#| label: tab-rows-after-na
+# Effective regression sample sizes after NA drop on the outcome.
+panel |>
+  summarise(
+    `Model A HQ (agency-city-year)` = sum(in_modelA_hq & !is.na(log_transit_cap)),
+    `Model B HQ (agency-city-year)` = sum(in_modelB_hq & !is.na(log_transit_cap)),
+    `Model A ext`                   = sum(in_modelA_ext & !is.na(log_transit_cap)),
+    `Model B ext`                   = sum(in_modelB_ext & !is.na(log_transit_cap))
+  ) |>
+  pivot_longer(everything(), names_to = "Sample", values_to = "City-year rows") |>
+  kable(caption = "Effective regression rows (after NA drop on log_transit_cap)") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r}
+#| label: tab-outcome-cat
+panel |>
+  filter(group_A == "treated") |>
+  distinct(city_id, outcome_cat) |>
+  count(outcome_cat, name = "cities") |>
+  kable(caption = "Treated-city composition by outcome category") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## 2 – NTD coverage diagnostic
+
+```{r}
+#| label: fig-coverage-heatmap
+#| fig-cap: "Share of cities with an NTD report each year, by Model A group"
+#| fig-height: 4
+
+cov <- panel |>
+  filter(in_modelA_hq, !is.na(group_A)) |>
+  group_by(group_A, year) |>
+  summarise(
+    n_cities    = n_distinct(city_id),
+    n_observed  = n_distinct(city_id[ntd_observed]),
+    share_obs   = n_observed / n_cities,
+    .groups = "drop"
+  )
+
+ggplot(cov, aes(x = factor(year), y = group_A, fill = share_obs)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%d/%d", n_observed, n_cities)),
+            size = 3, color = "white") +
+  scale_fill_gradient(low = "#7f8c8d", high = "#27ae60",
+                      labels = scales::percent, limits = c(0, 1),
+                      name = "Share with\nNTD report") +
+  labs(title = "NTD reporting coverage by year and group",
+       subtitle = "Cells: cities-with-report / cities-in-group. Model A HQ sample.",
+       x = "Year", y = NULL)
+
+ggsave(here("output", "figures", "fig_coverage_heatmap.png"),
+       width = 9, height = 3.5, dpi = 150)
+```
+
+```{r}
+#| label: fig-coverage-by-city
+#| fig-cap: "Per-city NTD coverage timeline (Model A sample)"
+#| fig-height: 9
+
+city_obs <- panel |>
+  filter(in_modelA_hq) |>
+  mutate(grp = ifelse(city_id %in% panel$city_id[panel$group_A == "treated"],
+                      "treated", "control"))
+
+# Order cities: treated first, then by total years observed
+city_order <- city_obs |>
+  group_by(city_id, grp) |>
+  summarise(n_obs = sum(ntd_observed), .groups = "drop") |>
+  arrange(grp, desc(n_obs)) |>
+  pull(city_id)
+
+city_obs |>
+  mutate(city_id = factor(city_id, levels = city_order)) |>
+  ggplot(aes(x = year, y = city_id, fill = ntd_observed)) +
+  geom_tile(color = "white") +
+  scale_fill_manual(values = c(`TRUE` = "#27ae60", `FALSE` = "#ecf0f1"),
+                    name = "NTD observed") +
+  scale_x_continuous(breaks = 2014:2024) +
+  facet_grid(grp ~ ., scales = "free_y", space = "free_y") +
+  labs(title = "NTD reporting timeline by city",
+       subtitle = "Green = NTD report exists for that city-year. Sorted by total years observed within group.",
+       x = "Year", y = NULL) +
+  theme(axis.text.y = element_text(size = 6))
+
+ggsave(here("output", "figures", "fig_coverage_by_city.png"),
+       width = 9, height = 11, dpi = 150)
+```
+
+---
+
+## 3 – Outcome distribution
+
+```{r}
+#| label: fig-outcome-dist
+#| fig-cap: "Distribution of total transit capital spending (observed city-years)"
+#| fig-height: 4
+
+obs <- panel |> filter(ntd_observed)
+
+p_raw <- ggplot(obs |> filter(total_capital_usd > 0),
+                aes(x = total_capital_usd)) +
+  geom_histogram(bins = 50, fill = "#2980b9", alpha = 0.85) +
+  scale_x_log10(labels = scales::dollar_format(scale = 1e-6, suffix = "M",
+                                                accuracy = 0.1)) +
+  labs(title = "Capital spending (log dollar axis)",
+       x = "Total capital, USD (log scale)", y = "Agency-city-years")
+
+p_log <- ggplot(obs, aes(x = log_transit_cap)) +
+  geom_histogram(bins = 50, fill = "#27ae60", alpha = 0.85) +
+  labs(title = "log(transit capital + 1) – regression DV",
+       x = "log(transit capital + 1)", y = "Agency-city-years")
+
+p_raw + p_log +
+  plot_annotation(subtitle = sprintf("N = %d agency-city-years with NTD report", nrow(obs)))
+
+ggsave(here("output", "figures", "fig_outcome_dist.png"),
+       width = 10, height = 4, dpi = 150)
+```
+
+```{r}
+#| label: tab-outcome-summary
+panel |>
+  filter(in_modelA_hq, !is.na(group_A), ntd_observed) |>
+  group_by(group_A) |>
+  summarise(
+    `City-years (observed)` = n(),
+    `Median capital ($M)`   = round(median(total_capital_usd) / 1e6, 2),
+    `Mean log_transit_cap`  = round(mean(log_transit_cap), 2),
+    `SD log_transit_cap`    = round(sd(log_transit_cap), 2),
+    .groups = "drop"
+  ) |>
+  kable(caption = "Outcome summary by Model A group (observed years only)") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## 4 – Transit capital over time
+
+### 4a – By coverage tier (recall-active population)
+
+```{r}
+#| label: fig-capital-by-tier
+#| fig-cap: "Mean log transit capital by coverage tier (EXT/HQ/REST), recall-active population, by year"
+palette_tier <- c("EXT" = "#16a085", "HQ" = "#c0392b", "REST" = "#8e44ad")
+
+tier_ts <- bind_rows(
+  panel |> filter(in_modelA_ext)  |> mutate(tier = "EXT"),
+  panel |> filter(in_modelA_hq)   |> mutate(tier = "HQ"),
+  panel |> filter(in_modelA_rest) |> mutate(tier = "REST")
+) |>
+  filter(!is.na(log_transit_cap)) |>
+  group_by(tier, year) |>
+  summarise(
+    n_obs  = n(),
+    mean_y = mean(log_transit_cap),
+    se     = sd(log_transit_cap) / sqrt(n_obs),
+    ci_lo  = mean_y - 1.96 * se,
+    ci_hi  = mean_y + 1.96 * se,
+    .groups = "drop"
+  ) |>
+  mutate(tier = factor(tier, levels = c("EXT", "HQ", "REST")))
+
+ggplot(tier_ts, aes(x = year, y = mean_y, color = tier, fill = tier)) +
+  geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi), alpha = 0.12, color = NA) +
+  geom_line(linewidth = 0.9) +
+  geom_point(aes(size = n_obs)) +
+  scale_color_manual(values = palette_tier) +
+  scale_fill_manual(values = palette_tier) +
+  scale_x_continuous(breaks = 2014:2024) +
+  scale_size_continuous(range = c(1.5, 4.5), name = "N obs") +
+  labs(title = "Mean log(transit capital) by coverage tier and calendar year",
+       subtitle = "Full recall-active population (treated + control). Shaded band: 95% CI. Tiers nested: REST within HQ within EXT.",
+       x = "Year", y = "Mean log(transit capital + 1)",
+       color = "Tier", fill = "Tier")
+
+ggsave(here("output", "figures", "fig_capital_by_tier.png"),
+       width = 9, height = 5, dpi = 150)
+```
+
+### 4b – Treated vs. control (Model A sample)
+
+```{r}
+#| label: fig-time-series
+#| fig-cap: "Mean log transit capital, treated vs. control, by year (Model A sample)"
+
+ts <- panel |>
+  filter(in_modelA_hq, !is.na(group_A), !is.na(log_transit_cap)) |>
+  group_by(group_A, year) |>
+  summarise(
+    n_obs   = n(),
+    mean_y  = mean(log_transit_cap),
+    se      = sd(log_transit_cap) / sqrt(n_obs),
+    ci_lo   = mean_y - 1.96 * se,
+    ci_hi   = mean_y + 1.96 * se,
+    .groups = "drop"
+  )
+
+ggplot(ts, aes(x = year, y = mean_y, color = group_A, fill = group_A)) +
+  geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi), alpha = 0.18, color = NA) +
+  geom_line(linewidth = 0.9) +
+  geom_point(aes(size = n_obs)) +
+  scale_color_manual(values = palette_ab) +
+  scale_fill_manual(values = palette_ab) +
+  scale_x_continuous(breaks = 2014:2024) +
+  scale_size_continuous(range = c(1.5, 4.5), name = "N obs") +
+  labs(title = "Mean log(capital) by group, calendar year",
+       subtitle = "Shaded band: 95% CI from group-year mean. Model A sample, observed city-years only.",
+       x = "Year", y = "Mean log_transit_cap",
+       color = "Group", fill = "Group")
+
+ggsave(here("output", "figures", "fig_time_series.png"),
+       width = 9, height = 5, dpi = 150)
+```
+
+---
+
+## 5 – Pre-trend visualization (event time)
+
+```{r}
+#| label: fig-event-coverage
+#| fig-cap: "Per-treated-city NTD coverage in event time"
+#| fig-height: 4
+
+et_cov <- panel |>
+  filter(in_modelA_hq, group_A == "treated", !is.na(event_time_A)) |>
+  mutate(city_id = fct_reorder(city_id, first_success_year))
+
+ggplot(et_cov, aes(x = event_time_A, y = city_id, fill = ntd_observed)) +
+  geom_tile(color = "white") +
+  geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey30") +
+  scale_fill_manual(values = c(`TRUE` = "#27ae60", `FALSE` = "#ecf0f1"),
+                    name = "NTD observed") +
+  scale_x_continuous(breaks = seq(-10, 10, 2)) +
+  labs(title = "Event-time coverage, treated cities",
+       subtitle = "Each row = one treated city. Dashed line = recall year.",
+       x = "Event time (years from first successful recall)", y = NULL) +
+  theme(axis.text.y = element_text(size = 8))
+
+ggsave(here("output", "figures", "fig_event_coverage.png"),
+       width = 9, height = 4, dpi = 150)
+```
+
+```{r}
+#| label: fig-pretrend
+#| fig-cap: "Mean log transit capital by event time (pooled Removed + Resigned)"
+
+et <- panel |>
+  filter(in_modelA_hq,
+         group_A == "treated",
+         !is.na(event_time_A),
+         !is.na(log_transit_cap),
+         event_time_A >= -5, event_time_A <= 5) |>
+  group_by(event_time_A) |>
+  summarise(
+    n_obs   = n(),
+    n_city  = n_distinct(city_id),
+    mean_y  = mean(log_transit_cap),
+    se      = sd(log_transit_cap) / sqrt(n_obs),
+    ci_lo   = mean_y - 1.96 * se,
+    ci_hi   = mean_y + 1.96 * se,
+    .groups = "drop"
+  )
+
+ggplot(et, aes(x = event_time_A, y = mean_y)) +
+  geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey40") +
+  geom_hline(yintercept = mean(et$mean_y[et$event_time_A < 0]),
+             linetype = "dotted", color = "grey60") +
+  geom_ribbon(aes(ymin = ci_lo, ymax = ci_hi), fill = "#c0392b", alpha = 0.18) +
+  geom_line(color = "#c0392b", linewidth = 0.9) +
+  geom_point(aes(size = n_city), color = "#c0392b") +
+  scale_x_continuous(breaks = -5:5,
+                     labels = function(x) ifelse(x == 0, "Recall\nyear",
+                                                  as.character(x))) +
+  scale_size_continuous(range = c(2, 6), name = "N treated\ncities") +
+  labs(title = "Raw event-time means – treated cities only",
+       subtitle = "Pooled Removed + Resigned. ±5 years. Descriptive – no controls or FE.",
+       x = "Years relative to first successful recall",
+       y = "Mean log_transit_cap")
+
+ggsave(here("output", "figures", "fig_pretrend.png"),
+       width = 9, height = 5, dpi = 150)
+```
+
+```{r}
+#| label: tab-event-time
+et |>
+  select(event_time_A, n_city, n_obs, mean_y, ci_lo, ci_hi) |>
+  mutate(across(c(mean_y, ci_lo, ci_hi), ~ round(.x, 2))) |>
+  kable(caption = "Event-time bins – treated cities",
+        col.names = c("event time", "N cities", "N obs", "mean", "95% lo", "95% hi")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## 6 – Recall activity by year
+
+```{r}
+#| label: fig-petitions-by-year
+#| fig-cap: "Petition-filing years across the panel (Model B sample)"
+#| fig-height: 3.5
+
+panel |>
+  filter(in_modelB_hq, any_petition_this_year) |>
+  count(year) |>
+  ggplot(aes(x = year, y = n)) +
+  geom_col(fill = "#8e44ad", alpha = 0.85, width = 0.7) +
+  geom_text(aes(label = n), vjust = -0.4, size = 3.5) +
+  scale_x_continuous(breaks = 2014:2024) +
+  labs(title = "Petition-filing agency-city-years per calendar year",
+       subtitle = "Model B HQ sample. Each agency-city-year with a petition filed that year.",
+       x = "Year", y = "Agency-city-years with petition")
+
+ggsave(here("output", "figures", "fig_petitions_by_year.png"),
+       width = 9, height = 3.5, dpi = 150)
+```
+
+---
+
+## 7 – Control covariate distributions
+
+```{r}
+#| label: fig-controls
+#| fig-cap: "Distributions of time-varying controls"
+#| fig-height: 4
+
+ctrl <- panel |> filter(in_modelB_hq)
+
+p_unemp <- ggplot(ctrl |> filter(!is.na(unemp_rate)), aes(x = unemp_rate)) +
+  geom_histogram(bins = 40, fill = "#8e44ad", alpha = 0.85) +
+  labs(title = "Unemployment rate (county, BLS LAUS)",
+       x = "Unemployment rate (%)", y = "City-years")
+
+p_density <- ggplot(ctrl |> filter(!is.na(pop_density), pop_density > 0),
+                    aes(x = pop_density)) +
+  geom_histogram(bins = 40, fill = "#e67e22", alpha = 0.85) +
+  scale_x_log10(labels = scales::comma) +
+  labs(title = "Population density (Census PEP)",
+       x = "People per sq mi (log scale)", y = "City-years")
+
+p_unemp + p_density +
+  plot_annotation(subtitle = "Model B sample, all city-years")
+
+ggsave(here("output", "figures", "fig_controls.png"),
+       width = 10, height = 4, dpi = 150)
+```
+
+```{r}
+#| label: tab-control-summary
+ctrl |>
+  summarise(
+    `Pop density (median)`  = round(median(pop_density, na.rm = TRUE)),
+    `Pop density (p10)`     = round(quantile(pop_density, 0.10, na.rm = TRUE)),
+    `Pop density (p90)`     = round(quantile(pop_density, 0.90, na.rm = TRUE)),
+    `Unemp (median, %)`     = round(median(unemp_rate, na.rm = TRUE), 2),
+    `Unemp (p10, %)`        = round(quantile(unemp_rate, 0.10, na.rm = TRUE), 2),
+    `Unemp (p90, %)`        = round(quantile(unemp_rate, 0.90, na.rm = TRUE), 2)
+  ) |>
+  pivot_longer(everything(), names_to = "Statistic", values_to = "Value") |>
+  kable(caption = "Control variable summary (Model B sample)") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## 8 – Missingness diagnostic
+
+```{r}
+#| label: fig-missingness
+#| fig-cap: "Variable missingness by year (Model B sample)"
+#| fig-height: 4
+
+panel |>
+  filter(in_modelB_hq) |>
+  group_by(year) |>
+  summarise(
+    `log_transit_cap`        = mean(is.na(log_transit_cap)),
+    `pop_density`            = mean(is.na(pop_density)),
+    `unemp_rate`             = mean(is.na(unemp_rate)),
+    .groups = "drop"
+  ) |>
+  pivot_longer(-year, names_to = "variable", values_to = "pct_missing") |>
+  ggplot(aes(x = year, y = variable, fill = pct_missing)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = scales::percent(pct_missing, accuracy = 1)),
+            size = 3, color = "white") +
+  scale_fill_gradient(low = "#27ae60", high = "#c0392b",
+                      labels = scales::percent, limits = c(0, 1),
+                      name = "% Missing") +
+  scale_x_continuous(breaks = 2014:2024) +
+  labs(title = "Missingness by variable × year",
+       subtitle = "Model B sample.",
+       x = "Year", y = NULL)
+
+ggsave(here("output", "figures", "fig_missingness.png"),
+       width = 9, height = 3.5, dpi = 150)
+```
+
+---
+
+## 9 – Sample cascade and statistics
+
+### 9.1 Sample cascade
+
+```{r}
+#| label: tab-cascade
+
+# Universe and successful-recall pool cover all recall-active cities (from
+# `recalls`). The per-model rows count what enters each regression: cities,
+# agency-city pairs, and petition agency-city-years remaining after dropping rows
+# with missing DV or controls.
+estim <- panel |>
+  filter(!is.na(log_transit_cap), !is.na(log_pop_density), !is.na(unemp_rate))
+
+get_cities <- function(flag, group = NULL) {
+  keep <- estim[[flag]]
+  if (!is.null(group)) keep <- keep & estim$group_A == group
+  n_distinct(estim$city_id[keep])
+}
+get_pairs <- function(flag) n_distinct(estim$agency_city[estim[[flag]]])
+
+n_universe <- n_distinct(recalls$city_id)
+n_success  <- n_distinct(recalls$city_id[recalls$any_removed | recalls$any_resigned])
+
+cascade_table <- tribble(
+  ~Step, ~EXT, ~HQ, ~REST,
+  "Recall-active universe (cities)", n_universe, n_universe, n_universe,
+  "Successful recall pool (cities)", n_success, n_success, n_success,
+  "Model A: treated cities (in regression)",
+    get_cities("in_modelA_ext", "treated"), get_cities("in_modelA_hq", "treated"), get_cities("in_modelA_rest", "treated"),
+  "Model A: control cities (in regression)",
+    get_cities("in_modelA_ext", "control"), get_cities("in_modelA_hq", "control"), get_cities("in_modelA_rest", "control"),
+  "Model A: agency-city pairs (in regression)",
+    get_pairs("in_modelA_ext"), get_pairs("in_modelA_hq"), get_pairs("in_modelA_rest"),
+  "Model B: cities (in regression)",
+    get_cities("in_modelB_ext"), get_cities("in_modelB_hq"), get_cities("in_modelB_rest"),
+  "Model B: agency-city pairs (in regression)",
+    get_pairs("in_modelB_ext"), get_pairs("in_modelB_hq"), get_pairs("in_modelB_rest"),
+  "Model B: petition agency-city-years (in regression)",
+    sum(estim$in_modelB_ext & estim$any_petition_this_year),
+    sum(estim$in_modelB_hq & estim$any_petition_this_year),
+    sum(estim$in_modelB_rest & estim$any_petition_this_year)
+)
+
+cascade_title <- "Sample cascade"
+cascade_note  <- "The first two rows cover all recall-active cities; the per-model rows count the cities, agency-city pairs, and petition agency-city-years entering each regression after dropping rows with missing controls. EXT = agency matched by headquarters, service-area place, or service-area county; HQ = agency headquartered in the city; REST = agency both headquartered in and serving the city."
+
+writeLines(
+  as.character(
+    kbl(cascade_table, format = "latex", booktabs = TRUE, caption = cascade_title) |>
+      footnote(general = cascade_note, general_title = "",
+               footnote_as_chunk = TRUE, threeparttable = TRUE, escape = FALSE)),
+  here("output", "tables", "tab_cascade.tex"))
+
+cascade_table |>
+  kable(caption = cascade_title) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  footnote(general = cascade_note, general_title = "", footnote_as_chunk = TRUE)
+```
+
+### 9.2 Sample statistics
+
+```{r}
+#| label: tab-sample-stats
+
+stats_vars <- c("log_transit_cap", "total_capital_usd",
+                "pop_density", "unemp_rate", "any_petition_this_year")
+
+stat_labels <- c(log_transit_cap        = "log_transit_cap (DV)",
+                 total_capital_usd      = "Capital, USD (raw DV)",
+                 pop_density            = "Population density",
+                 unemp_rate             = "Unemployment rate (%)",
+                 any_petition_this_year = "Petition filed (0/1)")
+
+summarise_sample <- function(df, vars) {
+  df |>
+    select(all_of(vars)) |>
+    mutate(across(everything(), as.numeric)) |>
+    pivot_longer(everything(), names_to = "variable") |>
+    group_by(variable) |>
+    summarise(
+      N      = sum(!is.na(value)),
+      Mean   = mean(value,   na.rm = TRUE),
+      Median = median(value, na.rm = TRUE),
+      SD     = sd(value,     na.rm = TRUE),
+      Min    = min(value,    na.rm = TRUE),
+      Max    = max(value,    na.rm = TRUE),
+      .groups = "drop"
+    )
+}
+
+stats_table <- function(panel, model_flags, model_label, tex_path = NULL) {
+  tbl <- imap_dfr(model_flags, \(flag, label)
+    panel |> filter(.data[[flag]]) |>
+      summarise_sample(stats_vars) |>
+      mutate(Sample = label)
+  ) |>
+    mutate(variable = stat_labels[variable],
+           variable = factor(variable, levels = stat_labels[stats_vars]),
+           Sample   = factor(Sample, levels = names(model_flags))) |>
+    arrange(Sample, variable) |>
+    mutate(across(c(Mean, Median, SD, Min, Max), \(x) signif(x, 3))) |>
+    select(Sample, Variable = variable, N, Mean, Median, SD, Min, Max)
+
+  cap_title <- paste0("Sample statistics: ", model_label)
+  cap_note  <- "EXT = agency matched by headquarters, service-area place, or service-area county; HQ = agency headquartered in the city; REST = agency both headquartered in and serving the city."
+
+  if (!is.null(tex_path)) {
+    writeLines(
+      as.character(
+        kbl(tbl, format = "latex", booktabs = TRUE, caption = cap_title) |>
+          footnote(general = cap_note, general_title = "",
+                   footnote_as_chunk = TRUE, threeparttable = TRUE, escape = FALSE)),
+      tex_path)
+  }
+
+  tbl |>
+    kable(caption = cap_title) |>
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+    footnote(general = cap_note, general_title = "", footnote_as_chunk = TRUE)
+}
+
+modelA_flags <- c("EXT" = "in_modelA_ext", "HQ" = "in_modelA_hq", "REST" = "in_modelA_rest")
+modelB_flags <- c("EXT" = "in_modelB_ext", "HQ" = "in_modelB_hq", "REST" = "in_modelB_rest")
+
+stats_table(panel, modelA_flags, "Model A", here("output", "tables", "tab_sample_stats_A.tex"))
+stats_table(panel, modelB_flags, "Model B", here("output", "tables", "tab_sample_stats_B.tex"))
+```
+

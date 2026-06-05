@@ -1,0 +1,244 @@
+---
+title: "Stage 1b: Parse Ballotpedia recall data from HTML cache"
+execute:
+  cache: false
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Parse cached Ballotpedia HTML into a clean recalls dataset.
+# Inputs  : data/raw/ballotpedia/html/*.html (individual recall pages)
+# Outputs : data/raw/ballotpedia/recalls_raw.rds
+# =============================================================================
+```
+
+## Setup
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(here)
+
+here::i_am("_quarto.yml")
+
+html_dir <- here("data", "raw", "ballotpedia", "html")
+stopifnot(dir.exists(html_dir))
+```
+
+## Enumerate recall pages
+
+```{r}
+#| label: list-files
+all_files <- list.files(html_dir, pattern = "\\.html$", full.names = TRUE)
+
+# Exclude the 11 year-summary pages (filenames are just "YYYY.html")
+is_year_summary <- str_detect(basename(all_files), "^\\d{4}\\.html$")
+recall_files <- all_files[!is_year_summary]
+
+cat(sprintf("Total HTML files:     %d\n", length(all_files)))
+cat(sprintf("Year summary pages:   %d\n", sum(is_year_summary)))
+cat(sprintf("Individual recalls:   %d\n", length(recall_files)))
+```
+
+## Parser
+
+```{r}
+#| label: parser
+# Parse one recall page and return a 1-row tibble.
+parse_one <- function(path) {
+  raw <- paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+
+  # ---- Title -----------------------------------------------------------------
+  title <- str_match(raw, regex("<title>(.*?)</title>", dotall = TRUE))[, 2]
+  # Trim the trailing " - Ballotpedia"
+  title_clean <- str_remove(title, "\\s*-\\s*Ballotpedia\\s*$")
+
+  # Two title shapes: "<official> recall, <city>, <state> (<years>)" and the
+  # older city-less "<official> recall, <state> (<years>)".
+
+  m_full <- str_match(
+    title_clean,
+    "^(.*?) recall,\\s*(.+?),\\s*([^,()]+?)\\s*\\((\\d{4}(?:-\\d{4})?)\\)\\s*$"
+  )
+  m_nocity <- str_match(
+    title_clean,
+    "^(.*?) recall,\\s*([^,()]+?)\\s*\\((\\d{4}(?:-\\d{4})?)\\)\\s*$"
+  )
+
+  if (!is.na(m_full[1, 1])) {
+    official <- m_full[1, 2]; city <- m_full[1, 3]
+    state    <- m_full[1, 4]; year_range <- m_full[1, 5]
+    title_parse_status <- "full"
+  } else if (!is.na(m_nocity[1, 1])) {
+    official <- m_nocity[1, 2]; city <- NA_character_
+    state    <- m_nocity[1, 3]; year_range <- m_nocity[1, 4]
+    title_parse_status <- "nocity"
+  } else {
+    official <- NA_character_; city <- NA_character_
+    state <- NA_character_; year_range <- NA_character_
+    title_parse_status <- "failed"
+  }
+
+  # ---- Year range → filing_year / decision_year ------------------------------
+  years <- str_split(year_range, "-")[[1]]
+  filing_year   <- if (length(years) >= 1) suppressWarnings(as.integer(years[1])) else NA_integer_
+  decision_year <- if (length(years) == 2) suppressWarnings(as.integer(years[2])) else filing_year
+
+  # ---- wgCategories JS array ------------------------------------------------
+  cats_raw <- str_match(raw, regex('"wgCategories"\\s*:\\s*\\[(.*?)\\]', dotall = TRUE))[, 2]
+  if (is.na(cats_raw)) cats_raw <- ""
+  cats_vec <- str_extract_all(cats_raw, '"[^"]+"')[[1]] |>
+    str_remove_all('"')
+
+  # ---- Outcome classification ------------------------------------------------
+  # Priority: approved > resigned > defeated > did not go to a vote > multiple > underway
+  # (if multiple outcome tags present – multi-target pages – flag separately)
+  has <- function(x) any(str_detect(cats_vec, fixed(x, ignore_case = TRUE)))
+
+  outcome_tags <- cats_vec[str_starts(cats_vec, "Recall, ") &
+                             !str_detect(cats_vec,
+                                         "^Recall, \\d{4}$|^Recall, [A-Z][a-z]+ [A-Z][a-z]+$|^Recall, [A-Z][a-z]+$|^Recall, judicial$")]
+  # That pattern strips out year-tags, state-tags, and "Recall, judicial".
+
+  outcome <- case_when(
+    has("Recall, approved")           ~ "Removed",
+    has("Recall, resigned")           ~ "Resigned",
+    has("Recall, defeated")           ~ "Defeated",
+    has("Recall, did not go to a vote") ~ "Did Not Make Ballot",
+    has("Recall, multiple outcomes") ~ "Multiple Outcomes",
+    has("Recall, underway")          ~ "Underway",
+    TRUE                              ~ "Unknown"
+  )
+
+  # ---- Office type -----------------------------------------------------------
+  office_type <- case_when(
+    any(str_detect(cats_vec, "^Mayoral recalls,"))      &
+      any(str_detect(cats_vec, "^City council recalls,")) ~ "Mayor + Council",
+    any(str_detect(cats_vec, "^Mayoral recalls,"))       ~ "Mayor",
+    any(str_detect(cats_vec, "^City council recalls,")) ~ "Council",
+    any(str_detect(cats_vec, "^School board recalls,")) ~ "School Board",
+    has("Recall, judicial")                               ~ "Judicial",
+    TRUE                                                  ~ "Other"
+  )
+
+  tibble(
+    slug          = str_remove(basename(path), "\\.html$"),
+    title         = title_clean,
+    title_parse_status = title_parse_status,
+    official      = official,
+    city          = city,
+    state         = state,
+    year_range    = year_range,
+    filing_year   = filing_year,
+    decision_year = decision_year,
+    outcome       = outcome,
+    office_type   = office_type,
+    outcome_tags  = paste(outcome_tags, collapse = " | "),
+    all_cats      = paste(cats_vec, collapse = " | ")
+  )
+}
+
+recalls <- map_dfr(recall_files, parse_one, .progress = FALSE)
+
+cat(sprintf("Parsed %d pages.\n", nrow(recalls)))
+```
+
+## Validation
+
+### Title parse status
+
+```{r}
+#| label: val-title
+recalls |> count(title_parse_status)
+```
+
+### Outcome distribution
+
+```{r}
+#| label: val-outcome
+recalls |> count(outcome, sort = TRUE)
+```
+
+### Year distribution
+
+```{r}
+#| label: val-year
+recalls |> count(filing_year, sort = FALSE)
+```
+
+### Office type distribution
+
+```{r}
+#| label: val-office
+recalls |> count(office_type, sort = TRUE)
+```
+
+### Sanity check: city vs. state (should not swap)
+
+```{r}
+#| label: val-geo
+# Lists of valid US state names for a quick check
+us_states <- c(state.name, "District of Columbia", "Washington, D.C.")
+recalls |>
+  summarise(
+    n_rows                 = n(),
+    city_is_state_name     = sum(city %in% us_states, na.rm = TRUE),
+    state_is_valid         = sum(state %in% us_states, na.rm = TRUE),
+    state_is_missing       = sum(is.na(state)),
+    state_not_us_state_name = sum(!is.na(state) & !(state %in% us_states))
+  )
+
+# Show examples of state values that aren't standard US state names
+recalls |>
+  filter(!is.na(state), !(state %in% us_states)) |>
+  count(state, sort = TRUE) |>
+  print(n = Inf)
+```
+
+### Spot-check a few rows
+
+```{r}
+#| label: spot-check
+recalls |>
+  select(slug, official, city, state, filing_year, outcome, office_type) |>
+  slice_sample(n = 12) |>
+  knitr::kable()
+```
+
+## Write output
+
+```{r}
+#| label: write
+out_path <- here("data", "raw", "ballotpedia", "recalls_raw.rds")
+# Keep the core columns; drop the verbose diagnostic columns
+recalls_out <- recalls |>
+  select(slug, title, official, city, state,
+         filing_year, decision_year, year_range,
+         outcome, office_type,
+         title_parse_status, outcome_tags)
+
+saveRDS(recalls_out, out_path)
+cat(sprintf("Wrote %s (%d rows, %d cols)\n",
+            out_path, nrow(recalls_out), ncol(recalls_out)))
+```
+
+## Exit criteria
+
+```{r}
+#| label: exit-criteria
+n_total   <- nrow(recalls)
+n_four    <- sum(recalls$outcome %in% c("Removed", "Resigned", "Defeated", "Did Not Make Ballot"))
+pct_unk   <- mean(recalls$outcome == "Unknown") * 100
+city_bad  <- sum(recalls$city %in% state.name, na.rm = TRUE)
+yr_spread <- range(recalls$filing_year, na.rm = TRUE)
+
+cat(sprintf("- nrow > 400 ............ %s (%d)\n",     n_total > 400, n_total))
+cat(sprintf("- 4 canonical outcomes .. %s (%d covered)\n",
+            all(c("Removed","Resigned","Defeated","Did Not Make Ballot") %in% recalls$outcome),
+            n_four))
+cat(sprintf("- Unknown outcome < 5%% . %s (%.1f%%)\n", pct_unk < 5, pct_unk))
+cat(sprintf("- city != state name .... %s (%d bad rows)\n", city_bad == 0, city_bad))
+cat(sprintf("- year range ............ %d to %d\n", yr_spread[1], yr_spread[2]))
+```

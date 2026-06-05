@@ -1,0 +1,223 @@
+---
+title: "Stage 2: Clean recalls – mayor-only filter + city-year panel"
+execute:
+  cache: false
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Transform recalls_raw.rds into a clean, analysis-ready recall panel.
+# Inputs  : data/raw/ballotpedia/recalls_raw.rds
+# Outputs : data/cleaned/recalls_clean.rds
+#
+# Steps:
+#   (1) Recover city for "nocity" title-parse rows (city is inside `official`).
+#   (2) Filter to Mayor / Mayor + Council office types.
+#   (3) Standardize city + state for matching (lowercased, trimmed, suffix-stripped).
+#   (4) Collapse to one row per (city_id, filing_year).
+#   (5) Build outcome flags (any_removed, any_resigned, any_defeated, any_dnmb).
+#   (6) Compute per-city recall_attempt_count over 2014-2024.
+# =============================================================================
+```
+
+## Setup
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(here)
+here::i_am("_quarto.yml")
+source(here("R", "std_city.R"))
+
+recalls <- readRDS(here("data", "raw", "ballotpedia", "recalls_raw.rds"))
+cat("Input:", nrow(recalls), "rows\n")
+```
+
+## Step 1 – Recover city for nocity rows
+
+The "nocity" rows have a title like `<City> Mayor and City Council recall, <State> (<year>)`
+with city embedded in the `official` string. Parse it back out.
+
+```{r}
+#| label: recover-city
+nocity <- recalls |>
+  filter(title_parse_status == "nocity") |>
+  mutate(
+    city_recovered = official |>
+      str_remove("\\s+(Mayor|Mayoral|Mayor and City Council|Mayoral and City Commission|Mayor and Commissioners|City Council|Town Council|Town Board|Board of Trustees|Township Board).*$") |>
+      str_trim()
+  )
+
+nocity |>
+  select(slug, official, city_recovered, state, filing_year) |>
+  knitr::kable()
+```
+
+```{r}
+#| label: merge-recovered
+recalls2 <- recalls |>
+  left_join(nocity |> select(slug, city_recovered), by = "slug") |>
+  mutate(city = coalesce(city, city_recovered)) |>
+  select(-any_of("city_recovered"))
+
+cat("After recovery – rows with NA city:", sum(is.na(recalls2$city)), "\n")
+```
+
+## Step 2 – Mayor-only filter
+
+```{r}
+#| label: mayor-filter
+mayoral <- recalls2 |>
+  filter(office_type %in% c("Mayor", "Mayor + Council"))
+
+cat("After mayor filter:", nrow(mayoral), "rows (dropped",
+    nrow(recalls2) - nrow(mayoral), ")\n")
+
+mayoral |> count(office_type)
+```
+
+## Step 3 – Standardize city + state
+
+```{r}
+#| label: standardize
+# State: keep canonical proper-cased state name; drop rows with non-US state
+us_states <- c(state.name, "District of Columbia")
+
+# Known Ballotpedia state-field typos → canonical name
+state_typo_fix <- c("Michgian" = "Michigan")
+
+clean <- mayoral |>
+  mutate(state = recode(state, !!!state_typo_fix)) |>
+  filter(state %in% us_states) |>
+  mutate(
+    city_std  = std_city(city),
+    state_std = str_to_lower(state),
+    city_id   = paste(city_std, state_std, sep = "|")
+  )
+
+cat("After state validation:", nrow(clean), "rows\n")
+cat("Unique cities:", n_distinct(clean$city_id), "\n")
+cat("Unique states:", n_distinct(clean$state), "\n")
+```
+
+## Step 4 – Collapse to one row per (city_id, filing_year)
+
+```{r}
+#| label: collapse
+# Check current uniqueness
+dupes <- clean |> count(city_id, filing_year) |> filter(n > 1)
+cat("Duplicate (city_id, filing_year) keys before collapse:", nrow(dupes), "\n")
+if (nrow(dupes) > 0) print(dupes)
+
+# Outcome priority for aggregation: Removed > Resigned > Defeated > DNMB > Other
+outcome_rank <- c("Removed" = 1, "Resigned" = 2, "Defeated" = 3,
+                  "Did Not Make Ballot" = 4, "Multiple Outcomes" = 5,
+                  "Underway" = 6, "Unknown" = 7)
+
+panel <- clean |>
+  mutate(rank = outcome_rank[outcome]) |>
+  group_by(city_id, filing_year) |>
+  arrange(rank, .by_group = TRUE) |>
+  summarise(
+    city               = first(city),
+    state              = first(state),
+    city_std           = first(city_std),
+    state_std          = first(state_std),
+    decision_year      = max(decision_year, na.rm = TRUE),
+    year_range         = first(year_range),
+    office_type        = paste(sort(unique(office_type)), collapse = "; "),
+    primary_outcome    = first(outcome),           # highest-rank outcome
+    n_slugs            = n(),
+    slug_list          = paste(slug, collapse = " | "),
+    any_removed        = any(outcome == "Removed"),
+    any_resigned       = any(outcome == "Resigned"),
+    any_defeated       = any(outcome == "Defeated"),
+    any_dnmb           = any(outcome == "Did Not Make Ballot"),
+    any_multiple       = any(outcome == "Multiple Outcomes"),
+    any_underway       = any(outcome == "Underway"),
+    any_unknown        = any(outcome == "Unknown"),
+    .groups = "drop"
+  ) |>
+  mutate(
+    # Model A treatment: successful recall = Removed or Resigned.
+    success_recall = any_removed | any_resigned,
+    # Model B treatment: any petition filed this year.
+    petition_filed = TRUE
+  )
+
+cat("Collapsed panel rows:", nrow(panel), "\n")
+cat("Unique cities:", n_distinct(panel$city_id), "\n")
+```
+
+## Step 5 – Recall attempt count per city
+
+```{r}
+#| label: attempt-count
+panel <- panel |>
+  group_by(city_id) |>
+  mutate(recall_attempt_count = n()) |>
+  ungroup()
+
+panel |> count(recall_attempt_count) |>
+  rename(`petitions in window` = recall_attempt_count, `n cities` = n) |>
+  knitr::kable()
+```
+
+## Step 6 – Validation
+
+```{r}
+#| label: validate
+cat("=== Panel summary ===\n")
+cat(sprintf("Rows (city × filing_year):    %d\n", nrow(panel)))
+cat(sprintf("Unique cities (city_id):      %d\n", n_distinct(panel$city_id)))
+cat(sprintf("Year span:                    %d to %d\n",
+            min(panel$filing_year), max(panel$filing_year)))
+cat(sprintf("Successful recalls (Model A): %d (%.1f%%)\n",
+            sum(panel$success_recall), 100*mean(panel$success_recall)))
+
+cat("\n=== Primary outcome distribution ===\n")
+print(panel |> count(primary_outcome, sort = TRUE))
+
+cat("\n=== Outcome by year ===\n")
+panel |>
+  count(filing_year, primary_outcome) |>
+  pivot_wider(names_from = primary_outcome, values_from = n, values_fill = 0) |>
+  knitr::kable()
+
+cat("\n=== Top 10 most recall-active cities ===\n")
+panel |>
+  count(city_id, city, state, sort = TRUE) |>
+  slice_head(n = 10) |>
+  knitr::kable()
+```
+
+## Write output
+
+```{r}
+#| label: write
+dir.create(here("data", "cleaned"), recursive = TRUE, showWarnings = FALSE)
+out_path <- here("data", "cleaned", "recalls_clean.rds")
+saveRDS(panel, out_path)
+cat(sprintf("Wrote %s (%d rows, %d cols)\n", out_path, nrow(panel), ncol(panel)))
+```
+
+## Exit criteria
+
+```{r}
+#| label: exit
+has_unique_keys <- panel |> count(city_id, filing_year) |> pull(n) |> max() == 1
+n_treated       <- sum(panel$success_recall)
+
+cat(sprintf("- One row per (city_id, filing_year):  %s\n", has_unique_keys))
+cat(sprintf("- Rows in reasonable range (200-400):  %s (%d)\n",
+            nrow(panel) >= 200 && nrow(panel) <= 400, nrow(panel)))
+cat(sprintf("- All four outcome flags populated:    %s\n",
+            all(c(sum(panel$any_removed), sum(panel$any_resigned),
+                  sum(panel$any_defeated), sum(panel$any_dnmb)) > 0)))
+cat(sprintf("- Multi-petition cities flagged:       %s (max count = %d)\n",
+            max(panel$recall_attempt_count) >= 2,
+            max(panel$recall_attempt_count)))
+cat(sprintf("- Treated cities (success_recall):     %d\n", n_treated))
+```

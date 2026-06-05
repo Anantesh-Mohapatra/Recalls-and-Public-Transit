@@ -1,0 +1,25 @@
+\begin{table}
+
+\caption{\label{tab:tab-cascade}Sample cascade}
+\centering
+\begin{threeparttable}
+\begin{tabular}[t]{lrrr}
+\toprule
+Step & EXT & HQ & REST\\
+\midrule
+Recall-active universe (cities) & 359 & 359 & 359\\
+Successful recall pool (cities) & 112 & 112 & 112\\
+Model A: treated cities (in regression) & 64 & 11 & 4\\
+Model A: control cities (in regression) & 221 & 99 & 76\\
+Model A: agency-city pairs (in regression) & 1206 & 210 & 96\\
+\addlinespace
+Model B: cities (in regression) & 236 & 86 & 59\\
+Model B: agency-city pairs (in regression) & 1127 & 178 & 74\\
+Model B: petition agency-city-years (in regression) & 726 & 125 & 72\\
+\bottomrule
+\end{tabular}
+\begin{tablenotes}[para]
+\item The first two rows cover all recall-active cities; the per-model rows count the cities, agency-city pairs, and petition agency-city-years entering each regression after dropping rows with missing controls. EXT = agency matched by headquarters, service-area place, or service-area county; HQ = agency headquartered in the city; REST = agency both headquartered in and serving the city.
+\end{tablenotes}
+\end{threeparttable}
+\end{table}

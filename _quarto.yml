@@ -1,0 +1,60 @@
+project:
+  type: website
+  output-dir: docs
+
+website:
+  title: "Is More Democracy Bad for Public Transit?"
+  navbar:
+    left:
+      - text: "Setup"
+        href: 00_setup.html
+      - text: "1 · Acquisition + parse"
+        menu:
+          - text: "1a · Ballotpedia scrape (HTML cache)"
+            href: 01a_scrape_ballotpedia.html
+          - text: "1b · Ballotpedia parse (from cache)"
+            href: 01b_parse_ballotpedia.html
+          - text: "1c · NTD download"
+            href: 01c_collect_ntd.html
+      - text: "2 · Clean recalls"
+        menu:
+          - text: "2 · Mayor-only filter + city-year panel"
+            href: 02a_clean_recalls.html
+          - text: "2b · Manual outcome recoding"
+            href: 02b_manual_recode_outcomes.html
+      - text: "3 · DV + sample"
+        menu:
+          - text: "3b · NTD capital (unified panel)"
+            href: 03b_extract_ntd.html
+          - text: "3c · NTD agency–city roster"
+            href: 03c_match_roster.html
+          - text: "3d · Sample construction"
+            href: 03d_sample_construction.html
+      - text: "4 · Build controls"
+        href: 04_build_controls.html
+      - text: "5 · Build panel"
+        href: 05_build_panel.html
+      - text: "6 · EDA"
+        href: 06_eda.html
+      - text: "7 · Models"
+        href: 07_models.html
+      - text: "8 · Extended models"
+        href: 08_extended.html
+      - text: "9 · Robustness"
+        href: 09_robustness.html
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    code-fold: true         # Code blocks collapsible by default
+    code-tools: true        # Show/hide all code button
+    embed-resources: true   # Self-contained HTML, no external dependencies
+    fig-width: 9
+    fig-height: 5.5
+
+execute:
+  warning: false            # Suppress package load warnings in rendered output
+  message: false            # Suppress info messages (e.g., tidyverse load messages)
+  cache: true               # Cache chunk results to speed up re-rendering

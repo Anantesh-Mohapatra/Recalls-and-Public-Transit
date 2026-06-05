@@ -1,0 +1,235 @@
+---
+title: "Stage 3b: NTD Capital Expenses – unified agency-year panel 2014-2024"
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Build a tidy agency-year panel of NTD total capital expenditure.
+# Sources :
+#   Capital:
+#     2014-2021: data/raw/ntd/capital_use_YYYY.xlsx
+#     2022-2024: data/raw/ntd/ntd_capital_socrata_raw.csv (Socrata fphd-jyyj)
+#   Agency directory (city/state per ntd_id):
+#     2014-2024: data/raw/ntd/agency_info_YYYY.xlsx  (FTA Annual Database
+#                Agency Information; the official agency-year directory)
+# Output  : data/cleaned/ntd_transit.rds
+#   Columns: ntd_id, agency_name, city, state, year, total_capital_usd
+# =============================================================================
+```
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(readxl)
+library(here)
+here::i_am("_quarto.yml")
+```
+
+## Read 2014-2021 xlsx files
+
+```{r}
+#| label: xlsx
+# Column-name normalization – 2014 uses different headers than 2017+
+pick_first <- function(df, candidates) {
+  for (c in candidates) if (c %in% names(df)) return(df[[c]])
+  rep(NA_character_, nrow(df))
+}
+
+read_xlsx_year <- function(yr) {
+  f <- here("data", "raw", "ntd", sprintf("capital_use_%d.xlsx", yr))
+  if (!file.exists(f)) return(tibble())
+  sheets <- excel_sheets(f)
+  sheet <- sheets[str_detect(sheets, regex("capital.?use", ignore_case = TRUE))][1]
+  if (is.na(sheet)) sheet <- sheets[1]
+  # Text col_types so Reduced/Rural Reporter string ntd_ids (e.g., "0R02-00308")
+  # are not lost when read against an inferred-numeric column.
+  d <- suppressWarnings(read_excel(f, sheet = sheet, col_types = "text")) |>
+    janitor::clean_names()
+
+  tibble(
+    year              = yr,
+    ntd_id            = pick_first(d, c("ntd_id", "x5_digit_ntdid", "x5_digit_ntd_id")),
+    legacy_ntd_id     = pick_first(d, c("legacy_ntd_id", "x4_digit_ntdid", "x4_digit_ntd_id")),
+    agency_name       = pick_first(d, c("agency_name", "reporter_name")),
+    total_capital_usd = suppressWarnings(as.numeric(pick_first(d, c("total_capital_funds", "total"))))
+  ) |>
+    filter(!is.na(total_capital_usd), total_capital_usd > 0) |>
+    group_by(year, ntd_id, legacy_ntd_id, agency_name) |>
+    summarise(total_capital_usd = sum(total_capital_usd), .groups = "drop")
+}
+
+ntd_xlsx <- map_dfr(2014:2021, read_xlsx_year)
+cat("xlsx years loaded:", paste(sort(unique(ntd_xlsx$year)), collapse=", "), "\n")
+cat("xlsx agency-year rows:", nrow(ntd_xlsx), "\n")
+```
+
+## Read 2022-2024 Socrata CSV
+
+```{r}
+#| label: socrata
+so <- read_csv(here("data", "raw", "ntd", "ntd_capital_socrata_raw.csv"),
+               show_col_types = FALSE) |>
+  janitor::clean_names()
+# Columns of interest: year column, ntd_id, agency, city, state, total
+ntd_socrata <- so |>
+  transmute(
+    year              = as.integer(report_year),
+    ntd_id            = as.character(ntd_id),
+    agency_name       = as.character(agency),
+    city              = as.character(city),
+    state             = as.character(state),
+    total_capital_usd = suppressWarnings(as.numeric(total))
+  ) |>
+  filter(!is.na(total_capital_usd), total_capital_usd > 0) |>
+  group_by(year, ntd_id, agency_name, city, state) |>
+  summarise(total_capital_usd = sum(total_capital_usd), .groups = "drop")
+
+cat("Socrata years loaded:", paste(sort(unique(ntd_socrata$year)), collapse=", "), "\n")
+cat("Socrata agency-year rows:", nrow(ntd_socrata), "\n")
+```
+
+## Read agency-info files (FTA Annual Database Agency Information)
+
+```{r}
+#| label: agency-info
+# Force text col_types: in some years (notably 2020) ntd_id is read as numeric,
+# which NAs out Reduced/Rural Reporters with string IDs like "0R02-00308".
+read_agency_info <- function(yr) {
+  f <- here("data", "raw", "ntd", sprintf("agency_info_%d.xlsx", yr))
+  if (!file.exists(f)) return(tibble())
+  sheets <- readxl::excel_sheets(f)
+  d <- suppressWarnings(readxl::read_excel(f, sheet = sheets[1],
+                                           col_types = "text")) |>
+    janitor::clean_names()
+  tibble(
+    year             = yr,
+    ntd_id           = pick_first(d, c("ntd_id", "x5_digit_ntdid",
+                                       "x5_digit_ntd_id", "x5_digit_id")),
+    legacy_ntd_id    = pick_first(d, c("legacy_ntd_id", "x4_digit_ntdid",
+                                       "x4_digit_ntd_id", "x4_digit_id")),
+    agency_name      = pick_first(d, c("agency_name", "reporter_name")),
+    city             = pick_first(d, c("city", "agency_city", "reporter_city",
+                                       "hq_city", "p_city")),
+    state            = pick_first(d, c("state", "agency_state", "reporter_state",
+                                       "hq_state", "p_state")),
+    organization_type = pick_first(d, c("organization_type",
+                                        "institutional_structure",
+                                        "organization_type_description"))
+  ) |>
+    filter(!is.na(ntd_id) | !is.na(legacy_ntd_id))
+}
+
+agency_info <- map_dfr(2014:2024, read_agency_info)
+cat("Agency-info rows (all years):", nrow(agency_info), "\n")
+cat("Distinct ntd_ids:           ", n_distinct(agency_info$ntd_id), "\n")
+cat("Rows with city + state:     ",
+    sum(!is.na(agency_info$city) & !is.na(agency_info$state)), "\n")
+```
+
+## Attach city/state to pre-2022 rows via agency-info crosswalk
+
+```{r}
+#| label: crosswalk
+# Legacy <-> 5-digit ntd_id crosswalk from BOTH agency_info (best) and capital xlsx
+# (fallback for the rare legacy_ntd_id that only appears in capital files).
+legacy_xwalk <- bind_rows(
+  agency_info |>
+    filter(!is.na(ntd_id), !is.na(legacy_ntd_id)) |>
+    distinct(ntd_id, legacy_ntd_id),
+  ntd_xlsx |>
+    filter(!is.na(ntd_id), !is.na(legacy_ntd_id)) |>
+    distinct(ntd_id, legacy_ntd_id)
+) |>
+  distinct() |>
+  arrange(legacy_ntd_id, ntd_id) |>
+  group_by(legacy_ntd_id) |> slice(1) |> ungroup()
+
+# Fill ntd_id on pre-2017 xlsx rows (where only legacy was present)
+ntd_xlsx <- ntd_xlsx |>
+  left_join(legacy_xwalk |> rename(ntd_id_from_legacy = ntd_id),
+            by = "legacy_ntd_id") |>
+  mutate(ntd_id = coalesce(ntd_id, ntd_id_from_legacy)) |>
+  select(-ntd_id_from_legacy)
+
+# (year, ntd_id) -> city, state from the year-specific agency-info file.
+# Falls back to any other year for the same ntd_id when the precise year is missing.
+ai_yearly <- agency_info |>
+  filter(!is.na(ntd_id), !is.na(city) | !is.na(state)) |>
+  distinct(year, ntd_id, city, state)
+
+ai_any <- agency_info |>
+  filter(!is.na(ntd_id)) |>
+  group_by(ntd_id) |>
+  summarise(city_any  = first(na.omit(city)),
+            state_any = first(na.omit(state)),
+            .groups = "drop")
+
+ntd_xlsx2 <- ntd_xlsx |>
+  left_join(ai_yearly |> rename(city_y = city, state_y = state),
+            by = c("year", "ntd_id")) |>
+  left_join(ai_any, by = "ntd_id") |>
+  mutate(city  = coalesce(city_y, city_any),
+         state = coalesce(state_y, state_any)) |>
+  select(year, ntd_id, agency_name, city, state, total_capital_usd)
+
+cat("Pre-2022 capital rows with city matched via agency-info:",
+    sum(!is.na(ntd_xlsx2$city)), "of", nrow(ntd_xlsx2), "\n")
+cat("Pre-2022 capital rows with state matched via agency-info:",
+    sum(!is.na(ntd_xlsx2$state)), "of", nrow(ntd_xlsx2), "\n")
+```
+
+## Combine
+
+```{r}
+#| label: combine
+ntd <- bind_rows(
+  ntd_xlsx2,
+  ntd_socrata |> select(year, ntd_id, agency_name, city, state, total_capital_usd)
+) |>
+  arrange(year, ntd_id)
+
+cat("Full NTD panel – years:\n")
+print(ntd |> count(year))
+cat("\nUnique agencies:", n_distinct(ntd$ntd_id), "\n")
+cat("Rows with city/state:", sum(!is.na(ntd$city) & !is.na(ntd$state)), "/", nrow(ntd), "\n")
+```
+
+## Write capital panel + agency directory
+
+```{r}
+#| label: write
+out <- here("data", "cleaned", "ntd_transit.rds")
+saveRDS(ntd, out)
+cat(sprintf("Wrote %s – %d rows\n", out, nrow(ntd)))
+```
+
+```{r}
+#| label: agency-directory
+# Agency-level directory: one row per ntd_id with the most recent agency_name +
+# organization_type observed. `local_controlled` is TRUE only for the
+# "City, County or Local Government Unit or DOT" org-type category.
+
+local_controlled_orgs <- c(
+  "City, County or Local Government Unit or Department of Transportation"
+)
+
+agency_directory <- agency_info |>
+  filter(!is.na(ntd_id)) |>
+  group_by(ntd_id) |>
+  arrange(desc(year), .by_group = TRUE) |>
+  summarise(
+    agency_name       = first(na.omit(agency_name)),
+    organization_type = first(na.omit(organization_type)),
+    .groups = "drop"
+  ) |>
+  mutate(local_controlled = organization_type %in% local_controlled_orgs)
+
+saveRDS(agency_directory, here("data", "cleaned", "agency_directory.rds"))
+cat(sprintf("Wrote agency_directory.rds – %d agencies (%d locally controlled)\n",
+            nrow(agency_directory),
+            sum(agency_directory$local_controlled)))
+cat("\nOrganization-type distribution:\n")
+print(agency_directory |> count(organization_type, sort = TRUE))
+```

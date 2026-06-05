@@ -1,0 +1,274 @@
+---
+title: "Stage 3c: NTD agency–city match roster"
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Build the agency-city match roster used by Stages 3d, 4, 5.
+# Inputs  : data/cleaned/recalls_clean.rds
+#           data/cleaned/ntd_transit.rds
+#           data/raw/ntd/service_area_places_2024.csv  (FTA RY2024 served Places)
+#           data/raw/census/national_place_by_county2020.txt (Place->County)
+#           data/raw/census/national_cousub2020.txt (Cousub/MCD->County)
+# Outputs : data/cleaned/roster_ntd.rds (city_id, ntd_id, match_via_hq,
+#                                        match_via_sa_place, match_via_sa_county)
+#
+# Matching layers (recall city -> NTD agency):
+#   HQ          : agency's HQ city/state == recall city/state (direct + JW fuzzy)
+#   SA-place    : recall city listed in agency's RY2024 served-Places list
+#   SA-county   : recall city's county listed in agency's RY2024 served-Counties
+# A (city, agency) pair appears in the roster if ANY layer fires.
+# =============================================================================
+```
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(here)
+library(stringdist)
+here::i_am("_quarto.yml")
+source(here("R", "std_city.R"))
+
+recalls <- readRDS(here("data", "cleaned", "recalls_clean.rds"))
+ntd     <- readRDS(here("data", "cleaned", "ntd_transit.rds"))
+
+cat("recalls: ", nrow(recalls), "rows,", n_distinct(recalls$city_id), "unique cities\n")
+cat("NTD:    ", nrow(ntd), "rows,", n_distinct(ntd$ntd_id), "agencies\n")
+```
+
+## Standardize city names for matching
+
+```{r}
+#| label: std
+recalls_key <- recalls |>
+  distinct(city_id, city_std, state_std) |>
+  mutate(city_std = std_city(city_std),
+         state_std = str_to_lower(state_std))
+
+# NTD: build (city_std, state_std) key from rows with city+state available
+ntd_key <- ntd |>
+  filter(!is.na(city), !is.na(state)) |>
+  mutate(city_std = std_city(city),
+         state_std = str_to_lower(state.name[match(state, state.abb)])) |>
+  # state col in ntd is 2-letter abbrev; convert to full name then lower
+  mutate(state_std = coalesce(state_std, str_to_lower(state)))
+```
+
+## Direct match on (city_std, state_std)
+
+```{r}
+#| label: direct-match
+ntd_matched <- recalls_key |>
+  inner_join(ntd_key |> distinct(city_std, state_std, ntd_id),
+             by = c("city_std", "state_std"))
+cat("NTD direct matches – unique recall cities:",
+    n_distinct(ntd_matched$city_id), "/",
+    n_distinct(recalls_key$city_id), "\n")
+```
+
+## Fuzzy match (Jaro-Winkler) for remaining recall cities
+
+```{r}
+#| label: fuzzy-match
+# For each unmatched recall city, find the closest candidate within the same state.
+fuzzy_find <- function(unmatched, candidates, threshold = 0.92) {
+  out <- unmatched |> mutate(match_id = NA_character_, match_score = NA_real_, match_name = NA_character_)
+  for (st in unique(unmatched$state_std)) {
+    pool <- candidates |> filter(state_std == st)
+    if (nrow(pool) == 0) next
+    idx <- which(unmatched$state_std == st)
+    for (i in idx) {
+      scores <- 1 - stringdist::stringdist(unmatched$city_std[i], pool$city_std, method = "jw", p = 0.1)
+      best <- which.max(scores)
+      if (length(best) && scores[best] >= threshold) {
+        out$match_id[i]    <- pool$id[best]
+        out$match_score[i] <- scores[best]
+        out$match_name[i]  <- pool$city_std[best]
+      }
+    }
+  }
+  out
+}
+
+# NTD fuzzy
+ntd_pool <- ntd_key |> distinct(city_std, state_std, ntd_id) |> rename(id = ntd_id)
+ntd_unmatched <- recalls_key |>
+  anti_join(ntd_matched |> distinct(city_id), by = "city_id")
+ntd_fuzzy <- fuzzy_find(ntd_unmatched, ntd_pool)
+cat("NTD fuzzy hits (JW >= 0.92):", sum(!is.na(ntd_fuzzy$match_id)), "\n")
+
+# Total matched (direct + fuzzy)
+total_ntd_matched <- n_distinct(ntd_matched$city_id) + sum(!is.na(ntd_fuzzy$match_id))
+cat("\n--- TOTALS ---\n")
+cat("NTD:    ", total_ntd_matched, "/", n_distinct(recalls_key$city_id), "recall-active cities\n")
+```
+
+## Service-area matching (FTA Counties-and-Places, RY2024)
+
+```{r}
+#| label: sa-load
+# RY2024 served-Place + served-County data. Each row = (agency, served place,
+# served county) for an agency reporting demand-response (DR) mode. Agencies
+# running only fixed-route modes are absent and fall back to the HQ match.
+sa <- readr::read_csv(here("data", "raw", "ntd", "service_area_places_2024.csv"),
+                      show_col_types = FALSE) |>
+  janitor::clean_names()
+
+# Normalize served-place names to match std_city() output
+sa_norm <- sa |>
+  mutate(place_norm  = std_city(place_name),
+         county_norm = str_to_lower(county_name) |>
+                        str_remove("\\s+county$") |> str_trim(),
+         state_norm  = str_to_lower(county_state_name),
+         ntd_id      = as.character(ntd_id))
+
+cat("Service-area rows:", nrow(sa_norm), "\n")
+cat("Distinct agencies in SA dataset:", n_distinct(sa_norm$ntd_id), "\n")
+cat("Distinct (agency, county) pairs:", nrow(sa_norm |> distinct(ntd_id, state_norm, county_norm)), "\n")
+```
+
+```{r}
+#| label: place-county-xwalk
+# Recall city -> county lookup. Used to test whether a recall city's county
+# is listed in an agency's served-Counties.
+#
+# Two Census 2020 sources, combined with Place-priority + Cousub-fallback:
+#   (a) Place-by-County  – covers Incorporated Places + CDPs nationwide
+#   (b) Cousub-by-County – covers County Subdivisions / MCDs (townships,
+#       boroughs in NJ/PA, towns in New England, charter townships in MI, etc.)
+state_abb <- tibble::tibble(abb = state.abb, name = tolower(state.name)) |>
+  tibble::add_row(abb = "DC", name = "district of columbia") |>
+  tibble::add_row(abb = "PR", name = "puerto rico")
+
+pc <- readr::read_delim(
+  here("data", "raw", "census", "national_place_by_county2020.txt"),
+  delim = "|", show_col_types = FALSE
+) |> janitor::clean_names()
+
+pc_norm <- pc |>
+  dplyr::left_join(state_abb, by = c("state" = "abb")) |>
+  mutate(state_full  = coalesce(name, tolower(state)),
+         place_norm  = std_city(placename),
+         county_norm = str_to_lower(countyname) |>
+                        str_remove("\\s+county$") |> str_trim()) |>
+  select(place_norm, state_norm = state_full, county_norm)
+
+cs <- readr::read_delim(
+  here("data", "raw", "census", "national_cousub2020.txt"),
+  delim = "|", show_col_types = FALSE
+) |> janitor::clean_names()
+
+cs_norm <- cs |>
+  dplyr::left_join(state_abb, by = c("state" = "abb")) |>
+  mutate(state_full  = coalesce(name, tolower(state)),
+         place_norm  = std_city(cousubname),
+         county_norm = str_to_lower(countyname) |>
+                        str_remove("\\s+county$") |> str_trim()) |>
+  select(place_norm, state_norm = state_full, county_norm)
+
+# Place-priority, Cousub-fallback: a recall city that resolves via the Place
+# file is not looked up in the Cousub file.
+ra_counties_place <- recalls_key |>
+  inner_join(pc_norm,
+             by = c("city_std" = "place_norm", "state_std" = "state_norm"),
+             relationship = "many-to-many") |>
+  distinct(city_id, state_std, county_norm)
+
+ra_counties_cousub <- recalls_key |>
+  anti_join(ra_counties_place, by = "city_id") |>
+  inner_join(cs_norm,
+             by = c("city_std" = "place_norm", "state_std" = "state_norm"),
+             relationship = "many-to-many") |>
+  distinct(city_id, state_std, county_norm)
+
+ra_counties <- bind_rows(ra_counties_place, ra_counties_cousub) |> distinct()
+
+cat("Recall cities with at least one county match:",
+    n_distinct(ra_counties$city_id), "/", n_distinct(recalls_key$city_id),
+    "  (via Place:", n_distinct(ra_counties_place$city_id),
+    "; via Cousub fallback:", n_distinct(ra_counties_cousub$city_id), ")\n")
+```
+
+```{r}
+#| label: build-sa-matches
+# SA-place match: recall city listed in agency's served-Places (state-checked)
+sa_place_matches <- recalls_key |>
+  inner_join(sa_norm |> distinct(ntd_id, place_norm, state_norm),
+             by = c("city_std" = "place_norm", "state_std" = "state_norm"),
+             relationship = "many-to-many") |>
+  distinct(city_id, ntd_id) |>
+  mutate(match_via_sa_place = TRUE)
+
+# SA-county match: recall city's county listed in agency's served-Counties
+sa_county_matches <- ra_counties |>
+  inner_join(sa_norm |> distinct(ntd_id, county_norm, state_norm),
+             by = c("state_std" = "state_norm", "county_norm"),
+             relationship = "many-to-many") |>
+  distinct(city_id, ntd_id) |>
+  mutate(match_via_sa_county = TRUE)
+
+cat("SA-place (city, agency) pairs:  ", nrow(sa_place_matches), "\n")
+cat("SA-county (city, agency) pairs: ", nrow(sa_county_matches), "\n")
+```
+
+## Build agency match roster (HQ ∪ SA-place ∪ SA-county)
+
+```{r}
+#| label: build-roster
+# HQ matches: direct + fuzzy on agency's reported HQ city
+hq_matches <- bind_rows(
+  ntd_matched |> distinct(city_id, ntd_id),
+  ntd_fuzzy |> filter(!is.na(match_id)) |> distinct(city_id, ntd_id = match_id)
+) |> distinct() |>
+  mutate(match_via_hq = TRUE)
+
+# Union all (city, ntd_id) pairs across the three methods, then fold the flags
+ntd_roster <- bind_rows(
+  hq_matches |> select(city_id, ntd_id),
+  sa_place_matches |> select(city_id, ntd_id),
+  sa_county_matches |> select(city_id, ntd_id)
+) |> distinct() |>
+  left_join(hq_matches,        by = c("city_id", "ntd_id")) |>
+  left_join(sa_place_matches,  by = c("city_id", "ntd_id")) |>
+  left_join(sa_county_matches, by = c("city_id", "ntd_id")) |>
+  mutate(across(starts_with("match_via_"), \(x) replace_na(x, FALSE))) |>
+  select(city_id, ntd_id, match_via_hq, match_via_sa_place, match_via_sa_county)
+
+saveRDS(ntd_roster, here("data", "cleaned", "roster_ntd.rds"))
+
+cat("Wrote roster_ntd.rds:",
+    nrow(ntd_roster), "(city, agency) pairs;",
+    n_distinct(ntd_roster$city_id), "cities;",
+    n_distinct(ntd_roster$ntd_id), "agencies\n")
+cat("  via HQ:        ", sum(ntd_roster$match_via_hq), "pairs\n")
+cat("  via SA-place:  ", sum(ntd_roster$match_via_sa_place), "pairs\n")
+cat("  via SA-county: ", sum(ntd_roster$match_via_sa_county), "pairs\n")
+```
+
+## Coverage matrix: non-missing obs per matched city per year
+
+```{r}
+#| label: coverage
+# Coverage per year: how many matched recall cities have >0 observations?
+cov <- ntd |>
+  inner_join(ntd_roster, by = c("ntd_id")) |>
+  filter(total_capital_usd > 0) |>
+  distinct(city_id, year) |>
+  count(year, name = "cities_covered_ntd") |>
+  arrange(year)
+knitr::kable(cov, caption = "Recall-active cities with non-zero NTD transit-capital observations per year (HQ ∪ SA-place ∪ SA-county roster)")
+```
+
+## City-years available for event-study
+
+```{r}
+#| label: city-years
+# Total city-years: `cov` already counts distinct cities per year, so the
+# column sum is the distinct (city, year) total – no need to re-join.
+ntd_city_years <- sum(cov$cities_covered_ntd)
+
+cat(sprintf("Total NTD city-year observations w/ non-zero capital: %d  (window: %d-%d)\n",
+            ntd_city_years, min(cov$year), max(cov$year)))
+```

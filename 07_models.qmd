@@ -1,0 +1,166 @@
+---
+title: "Stage 7: Model estimation"
+execute:
+  cache: false
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Headline specifications.
+#   Model A – event-study, treatment = successful recall (Removed | Resigned)
+#   Model B – DiD, treatment = any petition filed this year
+# Unit: agency-city-year. FE: agency_city + year. Cluster: city_id.
+# Sample: HQ-anchored (in_modelA_hq / in_modelB_hq).
+# =============================================================================
+```
+
+## Setup
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(fixest)
+library(kableExtra)
+library(here)
+here::i_am("_quarto.yml")
+source(here("R", "model_helpers.R"))
+
+panel <- readRDS(here("data", "final", "panel.rds"))
+
+dir.create(here("output", "tables"),  recursive = TRUE, showWarnings = FALSE)
+dir.create(here("output", "figures"), recursive = TRUE, showWarnings = FALSE)
+
+theme_set(theme_minimal(base_size = 12) +
+          theme(plot.title = element_text(face = "bold"),
+                plot.subtitle = element_text(color = "grey40")))
+
+setFixest_dict(c(
+  log_transit_cap        = "log(transit capital + 1)",
+  log_pop_density        = "log(pop density)",
+  unemp_rate             = "Unemployment rate (%)",
+  any_petition_this_year = "Petition filed (0/1)",
+  covid_period           = "COVID period (2020-2021)",
+  agency_city            = "Agency-City",
+  year                   = "Year"
+))
+```
+
+---
+
+## Model A – event-study (HQ-anchored sample)
+
+Sample: agency-city-year rows where `in_modelA_hq == TRUE`. Treatment defined at the city level (recall happened in this city). FE absorb agency-city and year.
+
+### Model A headline
+
+```{r}
+#| label: modelA-7.1
+mA <- fit_modelA(panel |> filter(in_modelA_hq))
+
+etable(mA,
+       title  = "Model A event-study, HQ-anchored (agency-city + year FE)",
+       digits = "r3", se.below = TRUE)
+```
+
+```{r}
+#| label: fig-event-study
+#| fig-cap: "Model A event-study coefficients with 95% CIs (reference: t = -1)"
+#| fig-height: 4.5
+es_df <- extract_es(mA)
+
+ggplot(es_df, aes(x = et, y = est)) +
+  geom_hline(yintercept = 0, color = "grey50") +
+  geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey40") +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.2, color = "#c0392b") +
+  geom_point(size = 2.5, color = "#c0392b") +
+  scale_x_continuous(breaks = -5:5,
+                     labels = function(x) ifelse(x == 0, "Recall\nyear",
+                                                  as.character(x))) +
+  labs(title = "Model A – HQ-anchored event-study",
+       subtitle = "Agency-city + year FE. SE clustered by city. 95% CIs. Reference t = -1. Endpoints binned at ±5.",
+       x = "Event time (years from first successful recall)",
+       y = "Coefficient on log(transit capital + 1)")
+
+ggsave(here("output", "figures", "fig_eventstudy.png"),
+       width = 9, height = 4.5, dpi = 150)
+```
+
+```{r}
+#| label: tab-event-coefs
+es_df |>
+  filter(!is.na(se)) |>
+  arrange(et) |>
+  mutate(across(c(est, lo, hi), ~ round(.x, 3))) |>
+  select(`event time` = et, estimate = est, `95% lo` = lo, `95% hi` = hi) |>
+  kable(caption = "Model A event-time coefficients") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+### Pre-trend Wald test
+
+```{r}
+#| label: pretrend-wald
+pretrend_wald(mA, "et_for_reg::-[2-9]|et_for_reg::-[1-9][0-9]") |>
+  select(-spec) |>
+  mutate(across(c(F_stat, p_value), ~ round(.x, 3))) |>
+  kable(caption = "Joint Wald test on pre-period event-time coefs (H0: all = 0)") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## Model B – petition DiD (HQ-anchored sample)
+
+```{r}
+#| label: modelB-prep
+dat_mB_hq <- panel |> filter(in_modelB_hq)
+```
+
+### Model B headline
+
+```{r}
+#| label: modelB-7.3
+mB    <- fit_modelB_static(dat_mB_hq)
+mB_nc <- feols(log_transit_cap ~ any_petition_this_year | agency_city + year,
+               cluster = ~ city_id,
+               data    = dat_mB_hq |> filter(!is.na(log_transit_cap)))
+
+etable(mB_nc, mB,
+       headers = c("No ctrl", "Baseline"),
+       title   = "Model B petition DiD, HQ-anchored",
+       digits  = "r3", se.below = TRUE)
+```
+
+### Model B × COVID interaction
+
+```{r}
+#| label: modelB-7.4
+mB_covid <- fit_modelB_covid(dat_mB_hq)
+
+etable(mB_covid,
+       title  = "Model B × COVID interaction",
+       digits = "r3", se.below = TRUE)
+```
+
+---
+
+## Headline summary
+
+```{r}
+#| label: tab-headline
+bind_rows(
+  extract_one(mB_nc,    "Model B (no ctrl)",   PETITION_PAT,   "Petition"),
+  extract_one(mB,       "Model B (baseline)",  PETITION_PAT,   "Petition"),
+  extract_one(mB_covid, "Model B × COVID",     PETITION_PAT,   "Petition (non-COVID)"),
+  extract_one(mB_covid, "Model B × COVID",     COVID_INT_PAT,  "Petition × COVID")
+) |>
+  mutate(`95% CI` = sprintf("[%.3f, %.3f]", est - 1.96 * se, est + 1.96 * se),
+         across(c(est, se, p), ~ round(.x, 3))) |>
+  select(spec, term, est, se, `95% CI`, p) |>
+  kable(caption = "Headline coefficients – Model B",
+        col.names = c("Spec", "Term", "Estimate", "SE", "95% CI", "p")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+

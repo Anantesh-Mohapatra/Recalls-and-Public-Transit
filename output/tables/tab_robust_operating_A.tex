@@ -1,0 +1,52 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+caption={Model A robustness: operating expenses as the outcome (restricted sample)},
+note{}={* p \num{< 0.1}, ** p \num{< 0.05}, *** p \num{< 0.01}},
+note{ }={Event-study coefficients on log(transit operating + 1). Reference period t = -1. Distant event-years are pooled into the endpoint indicators.},
+note{  }={Agency-city and year fixed effects. Standard errors clustered by city.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]},
+hline{2}={1-2}{solid, black, 0.05em},
+hline{26}={1-2}{solid, black, 0.05em},
+hline{1}={1-2}{solid, black, 0.08em},
+hline{34}={1-2}{solid, black, 0.08em},
+column{2}={}{halign=c},
+column{1}={}{halign=l},
+}                     %% tabularray inner close
+& Operating expenses \\
+t = -5 & \num{0.110} \\
+& (\num{0.137}) \\
+t = -4 & \num{-0.033} \\
+& (\num{0.168}) \\
+t = -3 & \num{0.090} \\
+& (\num{0.151}) \\
+t = -2 & \num{-0.024} \\
+& (\num{0.032}) \\
+t = 0 & \num{0.020} \\
+& (\num{0.026}) \\
+t = 1 & \num{0.097}** \\
+& (\num{0.040}) \\
+t = 2 & \num{0.327} \\
+& (\num{0.216}) \\
+t = 3 & \num{0.054} \\
+& (\num{0.232}) \\
+t = 4 & \num{-0.010} \\
+& (\num{0.270}) \\
+t = 5 & \num{-0.095} \\
+& (\num{0.301}) \\
+log(pop density) & \num{0.378} \\
+& (\num{1.175}) \\
+Unemployment rate & \num{0.040} \\
+& (\num{0.054}) \\
+Num.Obs. & \num{702} \\
+R2 & \num{0.961} \\
+R2 Adj. & \num{0.954} \\
+R2 Within & \num{0.007} \\
+R2 Within Adj. & \num{-0.013} \\
+Std.Errors & by: city\_id \\
+FE: agency\_city & X \\
+FE: year & X \\
+\end{talltblr}
+\end{table}

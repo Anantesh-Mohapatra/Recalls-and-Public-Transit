@@ -1,0 +1,199 @@
+---
+title: "Stage 2b: Manual outcome recoding for Multiple-Outcomes / Underway cases"
+execute:
+  cache: false
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Override rows in recalls_clean.rds whose parsed outcome was
+#           "Multiple Outcomes" or "Underway", reassigning them to a canonical
+#           outcome (Removed / Resigned / Defeated / Did Not Make Ballot) based
+#           on direct review of the cached Ballotpedia HTML pages.
+#
+# Inputs  : data/cleaned/recalls_clean.rds
+# Outputs : data/cleaned/recalls_clean.rds                 (overwritten)
+#
+# Why this exists: the parser cannot resolve "Multiple Outcomes" / "Underway"
+#   tags to a per-mayor outcome, so those rows are recoded by hand here.
+#
+# Coding rules applied:
+#   - Only the mayor's own outcome is recorded. Other officials named on the
+#     same petition (council members, and a Mayor Pro Tem / deputy "backup
+#     mayor") are not treated as mayor-equivalent and do not set the outcome.
+#   - Township Supervisor treated as mayor-equivalent (the township's chief
+#     elected executive).
+# =============================================================================
+```
+
+## Setup
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(here)
+here::i_am("_quarto.yml")
+
+panel_v1 <- readRDS(here("data", "cleaned", "recalls_clean.rds"))
+cat("Input rows:", nrow(panel_v1), "\n")
+cat("Pre-recode primary_outcome distribution:\n")
+print(panel_v1 |> count(primary_outcome, sort = TRUE))
+```
+
+## Override table
+
+Each override is keyed by a substring of `slug_list` that uniquely identifies
+the affected row in the v1 panel. The `reason` column documents the body-text
+evidence from the cached HTML page that supports the recoded outcome.
+
+```{r}
+#| label: overrides
+overrides <- tribble(
+  ~slug_pattern,                                          ~new_outcome,          ~reason,
+  "Mayor_and_city_council_recall__Dalton_Gardens__Idaho", "Removed",             "Mayor Steve Roberge recalled in March 12, 2019 vote (page body lists him among recalled officials).",
+  "Mayor_and_city_council_recall__Elizabeth__Colorado",   "Defeated",            "Mayor Megan Vasquez survived the recall vote on April 7, 2020.",
+  "Mayor_and_city_council_recall__Huntington__Oregon",    "Defeated",            "Mayor Candy Howland's recall vote failed; only Councilor Deck was recalled.",
+  "Mayor_and_city_council_recall__Surrey__North_Dakota",  "Resigned",            "Mayor Jason Strand resigned on August 13, 2019, days after the petition.",
+  "Mayoral_recall__Estes_Park__Colorado",                 "Did Not Make Ballot", "Petition targeted Mayor Todd Jirsa and Mayor Pro Tem Cody Walker. The recall against Mayor Jirsa did not make the ballot (391 of 553 required valid signatures). Walker (Mayor Pro Tem, a backup/deputy role) is not treated as mayor, so only the mayor's outcome is recorded.",
+  "Tim_Elinski_recall__Cottonwood__Arizona",              "Did Not Make Ballot", "Body text: 'An effort to recall Mayor Tim Elinski did not go to a vote in Cottonwood, Arizona.' The wgCategories tag still reads 'Recall, underway' on the live page, but the page is finalized.",
+  "Town_board_recall__Adams_Township__Michigan",          "Removed",             "Township Supervisor Fred Fowler recalled (treated as mayor-equivalent). Note: no MI township appears in NTD, so this row will not contribute to the Model A panel anyway."
+)
+
+overrides |> knitr::kable()
+```
+
+## Apply overrides
+
+```{r}
+#| label: apply
+flag_col <- c(
+  "Removed"             = "any_removed",
+  "Resigned"            = "any_resigned",
+  "Defeated"            = "any_defeated",
+  "Did Not Make Ballot" = "any_dnmb"
+)
+
+panel_v2 <- panel_v1
+panel_v2$manually_recoded <- FALSE
+panel_v2$recode_reason    <- NA_character_
+
+for (i in seq_len(nrow(overrides))) {
+  pat     <- overrides$slug_pattern[i]
+  new_out <- overrides$new_outcome[i]
+  reason  <- overrides$reason[i]
+
+  idx <- which(str_detect(panel_v2$slug_list, fixed(pat)))
+  if (length(idx) != 1) {
+    stop(sprintf("Override pattern '%s' matched %d rows (expected 1).",
+                 pat, length(idx)))
+  }
+
+  # Reset all outcome flags
+  panel_v2$any_removed[idx]  <- FALSE
+  panel_v2$any_resigned[idx] <- FALSE
+  panel_v2$any_defeated[idx] <- FALSE
+  panel_v2$any_dnmb[idx]     <- FALSE
+  panel_v2$any_multiple[idx] <- FALSE
+  panel_v2$any_underway[idx] <- FALSE
+  panel_v2$any_unknown[idx]  <- FALSE
+
+  # Set the canonical flag
+  panel_v2[[flag_col[[new_out]]]][idx] <- TRUE
+
+  # Re-derive top-level fields
+  panel_v2$primary_outcome[idx] <- new_out
+  panel_v2$success_recall[idx]  <- new_out %in% c("Removed", "Resigned")
+
+  # Audit trail
+  panel_v2$manually_recoded[idx] <- TRUE
+  panel_v2$recode_reason[idx]    <- reason
+}
+
+cat("Recoded rows:", sum(panel_v2$manually_recoded), "\n")
+```
+
+## Diff table
+
+```{r}
+#| label: diff
+diff <- panel_v1 |>
+  select(city_id, city, state, filing_year,
+         outcome_v1 = primary_outcome,
+         success_v1 = success_recall) |>
+  inner_join(
+    panel_v2 |>
+      filter(manually_recoded) |>
+      select(city_id, filing_year,
+             outcome_v2 = primary_outcome,
+             success_v2 = success_recall,
+             recode_reason),
+    by = c("city_id", "filing_year")
+  ) |>
+  arrange(state, city)
+
+diff |>
+  select(city, state, filing_year, outcome_v1, outcome_v2, success_v1, success_v2) |>
+  knitr::kable(caption = "Outcome changes (v1 → v2)")
+```
+
+## Treatment-count impact
+
+```{r}
+#| label: impact
+impact <- tibble(
+  metric = c("Total rows",
+             "Successful recalls (Model A treated)",
+             "any_removed",
+             "any_resigned",
+             "any_defeated",
+             "any_dnmb",
+             "any_multiple (residual after recode)",
+             "any_underway (residual after recode)"),
+  v1 = c(nrow(panel_v1),
+         sum(panel_v1$success_recall),
+         sum(panel_v1$any_removed),
+         sum(panel_v1$any_resigned),
+         sum(panel_v1$any_defeated),
+         sum(panel_v1$any_dnmb),
+         sum(panel_v1$any_multiple),
+         sum(panel_v1$any_underway)),
+  v2 = c(nrow(panel_v2),
+         sum(panel_v2$success_recall),
+         sum(panel_v2$any_removed),
+         sum(panel_v2$any_resigned),
+         sum(panel_v2$any_defeated),
+         sum(panel_v2$any_dnmb),
+         sum(panel_v2$any_multiple),
+         sum(panel_v2$any_underway))
+) |>
+  mutate(delta = v2 - v1)
+
+impact |> knitr::kable()
+```
+
+## Validation
+
+```{r}
+#| label: validate
+stopifnot(
+  nrow(panel_v2) == nrow(panel_v1),
+  sum(panel_v2$any_multiple) == 0,
+  sum(panel_v2$any_underway) == 0,
+  sum(panel_v2$manually_recoded) == nrow(overrides),
+  all(panel_v2$primary_outcome %in% c("Removed", "Resigned", "Defeated",
+                                      "Did Not Make Ballot", "Unknown"))
+)
+cat("All post-recode invariants hold.\n")
+```
+
+## Write outputs
+
+```{r}
+#| label: write
+out_path <- here("data", "cleaned", "recalls_clean.rds")
+saveRDS(panel_v2, out_path)
+cat(sprintf("Wrote %s (%d rows, %d cols)\n", out_path, nrow(panel_v2), ncol(panel_v2)))
+```
+

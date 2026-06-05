@@ -1,0 +1,313 @@
+---
+title: "Stage 5: Build analytical panel (agency-city-year)"
+execute:
+  cache: false
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Build the agency-city-year analysis panel (one row per city × NTD
+#           agency serving it × year).
+# Inputs  :
+#   data/cleaned/recalls_clean.rds            recall events panel
+#   data/cleaned/ntd_transit.rds              agency-year NTD capital
+#   data/cleaned/ntd_operating.rds            agency-year NTD operating
+#   data/cleaned/agency_directory.rds         per-ntd_id directory + local_controlled
+#   data/cleaned/controls.rds                 city-year controls
+#   data/cleaned/sample_modelA_pairs.rds      (city_id, ntd_id, sample flags, group_A)
+#   data/cleaned/sample_modelB_pairs.rds      (city_id, ntd_id, sample flags)
+# Output  : data/final/panel.rds              agency-city-year frame
+# =============================================================================
+```
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(here)
+here::i_am("_quarto.yml")
+
+recalls      <- readRDS(here("data", "cleaned", "recalls_clean.rds"))
+ntd          <- readRDS(here("data", "cleaned", "ntd_transit.rds"))
+ntd_op       <- readRDS(here("data", "cleaned", "ntd_operating.rds"))
+agency_dir   <- readRDS(here("data", "cleaned", "agency_directory.rds"))
+controls     <- readRDS(here("data", "cleaned", "controls.rds"))
+A_pairs      <- readRDS(here("data", "cleaned", "sample_modelA_pairs.rds"))
+B_pairs      <- readRDS(here("data", "cleaned", "sample_modelB_pairs.rds"))
+
+WINDOW <- 2014:2024
+```
+
+## Step 1 – Universe of agency-city pairs in the panel
+
+```{r}
+#| label: pairs-universe
+# A (city, agency) pair enters the panel if it's flagged for any model/sample.
+# The panel isn't pre-restricted to one sample; it carries the union, and the
+# model specs filter on the sample flags they need.
+pairs <- bind_rows(
+  A_pairs |> select(city_id, ntd_id, match_via_hq, match_via_sa_place,
+                    match_via_sa_county, group_A,
+                    in_modelA_hq, in_modelA_rest, in_modelA_ext),
+  B_pairs |> select(city_id, ntd_id, match_via_hq, match_via_sa_place,
+                    match_via_sa_county,
+                    in_modelB_hq, in_modelB_rest, in_modelB_ext)
+) |>
+  group_by(city_id, ntd_id) |>
+  summarise(
+    match_via_hq        = any(match_via_hq, na.rm = TRUE),
+    match_via_sa_place  = any(match_via_sa_place, na.rm = TRUE),
+    match_via_sa_county = any(match_via_sa_county, na.rm = TRUE),
+    group_A             = first(na.omit(group_A)),
+    in_modelA_hq        = any(in_modelA_hq,   na.rm = TRUE),
+    in_modelA_rest      = any(in_modelA_rest, na.rm = TRUE),
+    in_modelA_ext       = any(in_modelA_ext,  na.rm = TRUE),
+    in_modelB_hq        = any(in_modelB_hq,   na.rm = TRUE),
+    in_modelB_rest      = any(in_modelB_rest, na.rm = TRUE),
+    in_modelB_ext       = any(in_modelB_ext,  na.rm = TRUE),
+    .groups = "drop"
+  )
+
+cat("Distinct (city, agency) pairs in panel universe:", nrow(pairs), "\n")
+cat("Cities:                ", n_distinct(pairs$city_id), "\n")
+cat("Agencies:              ", n_distinct(pairs$ntd_id), "\n")
+```
+
+## Step 2 – Build the panel grid
+
+```{r}
+#| label: grid
+# Deduplicate to one row per city_id – a handful of cities have variant
+# `city` strings for the same `city_id` (city vs. township spellings).
+city_attrs <- recalls |>
+  distinct(city_id, city, state) |>
+  group_by(city_id) |>
+  slice(1) |>
+  ungroup()
+
+grid <- pairs |>
+  inner_join(city_attrs, by = "city_id") |>
+  left_join(agency_dir, by = "ntd_id") |>
+  cross_join(tibble(year = WINDOW)) |>
+  mutate(agency_city = paste(ntd_id, city_id, sep = "|"))
+
+cat("Panel grid rows:", nrow(grid),
+    " =", n_distinct(grid$agency_city), "agency-city pairs ×",
+    length(WINDOW), "years\n")
+```
+
+## Step 3 – NTD outcomes (agency-year, joined directly)
+
+```{r}
+#| label: ntd-outcomes
+ntd_cap <- ntd |>
+  filter(year %in% WINDOW) |>
+  transmute(ntd_id, year,
+            total_capital_usd,
+            ntd_observed = TRUE)
+
+ntd_op_clean <- ntd_op |>
+  filter(year %in% WINDOW) |>
+  transmute(ntd_id, year, total_operating_usd)
+
+cat("NTD capital agency-years in window:", nrow(ntd_cap), "\n")
+cat("NTD operating agency-years in window:", nrow(ntd_op_clean), "\n")
+```
+
+## Step 4 – Treatment variables (city-level, broadcast to all agency rows)
+
+```{r}
+#| label: treatment
+# any_petition_this_year: TRUE for the (city, year) of each filing
+petition_years <- recalls |>
+  distinct(city_id, year = filing_year) |>
+  mutate(any_petition_this_year = TRUE)
+
+# first_success_year + outcome_cat per treated city
+first_treat <- recalls |>
+  filter(any_removed | any_resigned) |>
+  mutate(outcome_cat = case_when(
+    any_removed  ~ "Removed",
+    any_resigned ~ "Resigned"
+  )) |>
+  group_by(city_id) |>
+  arrange(filing_year, .by_group = TRUE) |>
+  slice(1) |>
+  ungroup() |>
+  transmute(city_id,
+            first_success_year = filing_year,
+            outcome_cat = factor(outcome_cat,
+                                 levels = c("Removed", "Resigned")))
+
+# recall_attempt_count per city
+attempt_count <- recalls |>
+  count(city_id, name = "recall_attempt_count")
+```
+
+## Step 5 – Assemble
+
+```{r}
+#| label: assemble
+panel <- grid |>
+  left_join(ntd_cap, by = c("ntd_id", "year")) |>
+  left_join(ntd_op_clean, by = c("ntd_id", "year")) |>
+  mutate(
+    ntd_observed       = replace_na(ntd_observed, FALSE),
+    total_capital_usd  = replace_na(total_capital_usd, 0),
+    total_operating_usd = replace_na(total_operating_usd, 0),
+    log_transit_cap    = log1p(total_capital_usd),
+    log_transit_op     = log1p(total_operating_usd),
+    total_transit_usd  = total_capital_usd + total_operating_usd,
+    log_transit_total  = log1p(total_transit_usd)
+  ) |>
+  # NTD-coverage flag (ntd_observed, joined above): TRUE iff the agency reported
+  # positive capital that year. Unobserved agency-years are set to NA, not 0, so
+  # the regression drops them rather than reading them as zero spending.
+  mutate(across(c(log_transit_cap, log_transit_op, log_transit_total),
+                \(x) if_else(ntd_observed, x, NA_real_)),
+         across(c(total_capital_usd, total_operating_usd, total_transit_usd),
+                \(x) if_else(ntd_observed, x, NA_real_))) |>
+  # City-year controls
+  left_join(controls |> select(city_id, year, pop, pop_density, unemp_rate),
+            by = c("city_id", "year")) |>
+  mutate(log_pop_density = log(pop_density)) |>
+  # Treatment vars (broadcast city-level vars to all agency rows for that city)
+  left_join(petition_years, by = c("city_id", "year")) |>
+  mutate(any_petition_this_year = replace_na(any_petition_this_year, FALSE)) |>
+  left_join(first_treat, by = "city_id") |>
+  left_join(attempt_count, by = "city_id") |>
+  mutate(recall_attempt_count = replace_na(recall_attempt_count, 0L),
+         event_time_A = year - first_success_year,
+         covid_period = year %in% 2020:2021,
+         # Event-time encoding: bin at ±5, and collapse controls /
+         # never-treated to the reference bin (-1).
+         et_binned = case_when(
+           is.na(event_time_A) ~ NA_integer_,
+           event_time_A <= -5  ~ -5L,
+           event_time_A >=  5  ~  5L,
+           TRUE                ~ as.integer(event_time_A)
+         ),
+         et_for_reg = ifelse(group_A == "control" | is.na(et_binned),
+                             -1L, et_binned),
+         # Sun-Abraham cohort sentinel for never-treated cities.
+         first_success_for_sunab = ifelse(is.na(first_success_year),
+                                          10000L,
+                                          as.integer(first_success_year)))
+
+# First-petition vs later-petition flags per city. cumsum over `recalls`
+# (per city), then broadcast to all agency-city rows for that city-year.
+petition_order <- recalls |>
+  arrange(city_id, filing_year) |>
+  group_by(city_id) |>
+  mutate(petition_idx = row_number()) |>
+  ungroup() |>
+  transmute(city_id, year = filing_year,
+            is_first_petition_year = petition_idx == 1L,
+            is_later_petition_year = petition_idx >  1L)
+
+panel <- panel |>
+  left_join(petition_order, by = c("city_id", "year")) |>
+  mutate(is_first_petition_year = replace_na(is_first_petition_year, FALSE),
+         is_later_petition_year = replace_na(is_later_petition_year, FALSE))
+
+## Validation
+
+```{r}
+#| label: val-basic
+cat("Panel dimensions:", nrow(panel), "rows ×", ncol(panel), "cols\n")
+cat("Distinct (agency, city, year) keys:",
+    n_distinct(paste(panel$ntd_id, panel$city_id, panel$year)),
+    "(should equal nrow)\n")
+cat("Distinct agencies:", n_distinct(panel$ntd_id), "\n")
+cat("Distinct cities:  ", n_distinct(panel$city_id), "\n")
+cat("Year span:        ", min(panel$year), "-", max(panel$year), "\n\n")
+
+cat("Sample-flag counts (city-level distinct):\n")
+panel |> distinct(city_id, .keep_all = TRUE) |>
+  summarise(
+    in_modelA_hq   = sum(in_modelA_hq),
+    in_modelA_rest = sum(in_modelA_rest),
+    in_modelA_ext  = sum(in_modelA_ext),
+    in_modelB_hq   = sum(in_modelB_hq),
+    in_modelB_rest = sum(in_modelB_rest),
+    in_modelB_ext  = sum(in_modelB_ext),
+    treated_hq     = sum(in_modelA_hq   & group_A == "treated", na.rm = TRUE),
+    treated_rest   = sum(in_modelA_rest & group_A == "treated", na.rm = TRUE),
+    treated_ext    = sum(in_modelA_ext  & group_A == "treated", na.rm = TRUE),
+    control_hq     = sum(in_modelA_hq   & group_A == "control", na.rm = TRUE),
+    control_rest   = sum(in_modelA_rest & group_A == "control", na.rm = TRUE),
+    control_ext    = sum(in_modelA_ext  & group_A == "control", na.rm = TRUE)
+  ) |>
+  knitr::kable()
+
+cat("\nSample-flag counts (agency-city pair distinct):\n")
+panel |> distinct(agency_city, .keep_all = TRUE) |>
+  summarise(
+    in_modelA_hq   = sum(in_modelA_hq),
+    in_modelA_rest = sum(in_modelA_rest),
+    in_modelA_ext  = sum(in_modelA_ext),
+    in_modelB_hq   = sum(in_modelB_hq),
+    in_modelB_rest = sum(in_modelB_rest),
+    in_modelB_ext  = sum(in_modelB_ext)
+  ) |>
+  knitr::kable()
+
+cat("\nLocal-control distribution (distinct agencies in panel):\n")
+panel |> distinct(ntd_id, local_controlled) |>
+  count(local_controlled) |> knitr::kable()
+```
+
+```{r}
+#| label: val-event
+panel |> filter(in_modelA_hq, group_A == "treated", !is.na(event_time_A)) |>
+  count(event_time_A) |> arrange(event_time_A) |>
+  knitr::kable(caption = "Model A HQ-sample event-time distribution (agency-city-years)")
+```
+
+```{r}
+#| label: val-coverage
+cov <- panel |> filter(in_modelA_hq) |>
+  group_by(group_A, year) |>
+  summarise(n_pairs   = n_distinct(agency_city),
+            n_with_cap = sum(ntd_observed),
+            .groups = "drop")
+knitr::kable(cov, caption = "Model A (HQ) – coverage by group × year (agency-city pair counts)")
+```
+
+## Save
+
+```{r}
+#| label: save
+dir.create(here("data", "final"), recursive = TRUE, showWarnings = FALSE)
+out <- here("data", "final", "panel.rds")
+saveRDS(panel, out)
+cat(sprintf("Wrote %s – %d rows, %d cols\n", out, nrow(panel), ncol(panel)))
+```
+
+## Exit criteria
+
+```{r}
+#| label: exit
+uk <- panel |> count(ntd_id, city_id, year) |> pull(n) |> max()
+n_treated_hq   <- n_distinct(panel$city_id[panel$in_modelA_hq   & panel$group_A == "treated"])
+n_treated_rest <- n_distinct(panel$city_id[panel$in_modelA_rest & panel$group_A == "treated"])
+n_treated_ext  <- n_distinct(panel$city_id[panel$in_modelA_ext  & panel$group_A == "treated"])
+n_B_hq         <- n_distinct(panel$city_id[panel$in_modelB_hq])
+n_B_rest       <- n_distinct(panel$city_id[panel$in_modelB_rest])
+
+cat(sprintf("- Unique (ntd_id, city_id, year) keys:          %s (max dup = %d)\n",
+            uk == 1, uk))
+cat(sprintf("- Model A HQ-anchored treated cities >= 5:      %s (%d)\n",
+            n_treated_hq >= 5, n_treated_hq))
+cat(sprintf("- Model A restricted treated cities >= 1:       %s (%d)\n",
+            n_treated_rest >= 1, n_treated_rest))
+cat(sprintf("- Model A extended-coverage treated >= 10:      %s (%d)\n",
+            n_treated_ext >= 10, n_treated_ext))
+cat(sprintf("- Model B HQ-anchored cities >= 30:             %s (%d)\n",
+            n_B_hq >= 30, n_B_hq))
+cat(sprintf("- Model B restricted cities >= 10:              %s (%d)\n",
+            n_B_rest >= 10, n_B_rest))
+cat(sprintf("- No NA in pop_density within Model B HQ sample: %s\n",
+            !any(is.na(panel$pop_density[panel$in_modelB_hq]))))
+```

@@ -1,0 +1,24 @@
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+caption={Model B petition effect by period and coverage tier},
+note{}={Outside COVID = the petition coefficient (b1); during COVID = b1 + b2 (petition + petition x COVID).},
+note{ }={During-COVID SE combines both terms via the fitted covariance. 95% CI uses +/- 1.96 SE.},
+note{  }={Outside-COVID p is the petition coefficient's p; during-COVID p is a delta-method linear-combination test of b1 + b2 = 0.},
+note{   }={From the COVID-interaction spec on each tier: agency-city and year fixed effects, SE clustered by city.},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]Q[]Q[]Q[]},
+hline{2}={1-6}{solid, black, 0.05em},
+hline{1}={1-6}{solid, black, 0.08em},
+hline{8}={1-6}{solid, black, 0.08em},
+}                     %% tabularray inner close
+Tier & Period & Effect & SE & 95% CI & p \\
+EXT & Outside COVID & 0.031 & 0.048 & [-0.063, 0.124] & 0.524 \\
+EXT & During COVID (2020-21) & -0.013 & 0.068 & [-0.145, 0.120] & 0.852 \\
+HQ & Outside COVID & 0.205 & 0.117 & [-0.024, 0.435] & 0.083 \\
+HQ & During COVID (2020-21) & -0.035 & 0.167 & [-0.363, 0.293] & 0.834 \\
+REST & Outside COVID & 0.325 & 0.149 & [0.032, 0.618] & 0.034 \\
+REST & During COVID (2020-21) & -0.193 & 0.288 & [-0.759, 0.372] & 0.503 \\
+\end{talltblr}
+\end{table}

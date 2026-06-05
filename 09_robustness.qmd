@@ -1,0 +1,430 @@
+---
+title: "Stage 9: Robustness checks"
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Robustness checks for the headline specs (agency-city-year panel).
+#           Each check is run on all three samples (EXT / HQ / REST). Model A
+#           reports the recall-year (t=0) event-study coefficient; Model B uses
+#           the COVID-interaction spec (petition main effect = non-COVID effect).
+#   9.1  Pre-trend Wald test (Model A)
+#   9.2  Event-window variation (±3, ±5, ±7) for Model A
+#   9.3  Alternative DV: NTD operating expenses
+#   9.4  Local-government hard filter (keep only general-purpose local-gov agencies)
+# Inputs  : data/final/panel.rds
+# Outputs : output/figures/, inline HTML
+# =============================================================================
+```
+
+## Setup
+
+```{r}
+#| label: setup
+#| cache.extra: !expr file.info(here::here("data", "final", "panel.rds"))$mtime
+library(tidyverse)
+library(fixest)
+library(kableExtra)
+library(here)
+here::i_am("_quarto.yml")
+source(here("R", "model_helpers.R"))
+
+panel <- readRDS(here("data", "final", "panel.rds"))
+
+dir.create(here("output", "tables"),  recursive = TRUE, showWarnings = FALSE)
+dir.create(here("output", "figures"), recursive = TRUE, showWarnings = FALSE)
+
+theme_set(theme_minimal(base_size = 12) +
+          theme(plot.title = element_text(face = "bold"),
+                plot.subtitle = element_text(color = "grey40")))
+
+setFixest_dict(c(
+  log_transit_cap          = "log(transit capital + 1)",
+  log_transit_op           = "log(transit operating + 1)",
+  log_transit_total        = "log(transit total + 1)",
+  log_pop_density          = "log(pop density)",
+  unemp_rate               = "Unemployment rate (%)",
+  any_petition_this_year   = "Petition (any)",
+  city_id                  = "City",
+  year                     = "Year"
+))
+```
+
+```{r}
+#| label: window-helper
+# The panel carries the default ±5 binning; `make_et` overrides the bin
+# endpoints for the window-variation robustness check.
+make_et <- function(df, lo, hi) {
+  df |>
+    mutate(
+      et_binned  = case_when(
+        is.na(event_time_A) ~ NA_integer_,
+        event_time_A <= lo  ~ as.integer(lo),
+        event_time_A >= hi  ~ as.integer(hi),
+        TRUE                ~ as.integer(event_time_A)
+      ),
+      et_for_reg = ifelse(group_A == "control" | is.na(et_binned), -1L, et_binned)
+    )
+}
+```
+
+
+## Baseline replications
+
+Agency-city-year panel: FE = agency_city + year; cluster = city_id. Every
+robustness check below is run on all three samples (EXT / HQ / REST). Model A
+reports the recall-year (t=0) event-study coefficient; Model B is the
+COVID-interaction spec, whose petition main effect is the non-COVID effect (the
+reported headline) and whose interaction term is the pandemic-year shift.
+
+```{r}
+#| label: baselines
+# Per-tier Model A event-study fits, used by the pre-trend Wald test below.
+mA_ext  <- fit_modelA(panel |> filter(in_modelA_ext))
+mA_hq   <- fit_modelA(panel |> filter(in_modelA_hq))
+mA_rest <- fit_modelA(panel |> filter(in_modelA_rest))
+
+# Pre-period regex for the Model A pre-trend Wald test (et < -1).
+PRE_PAT <- "^et_for_reg::-[2-9]|^et_for_reg::-[1-9][0-9]"
+```
+
+---
+
+## Pre-trend Wald test
+
+Joint F-test that Model A pre-period coefficients are zero
+(`et_for_reg::-2` through `et_for_reg::-5`).
+
+```{r}
+#| label: 9-1-modelA-wald
+bind_rows(
+  pretrend_wald(mA_ext,  PRE_PAT, "EXT"),
+  pretrend_wald(mA_hq,   PRE_PAT, "HQ"),
+  pretrend_wald(mA_rest, PRE_PAT, "REST")
+) |>
+  mutate(across(c(F_stat, p_value), ~ round(.x, 3))) |>
+  kable(caption = "Model A – joint Wald test on pre-period event-time coefs (et < -1), by sample") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## Event-window variation
+
+Re-fit the Model A event-study at three window widths (±3, ±5 baseline, ±7).
+
+```{r}
+#| label: 9-2-modelA-windows
+fit_modelA_window <- function(df, lo, hi) {
+  df_w <- df |> make_et(lo, hi)
+  feols(log_transit_cap ~ i(et_for_reg, ref = -1) + log_pop_density + unemp_rate
+        | agency_city + year, cluster = ~ city_id,
+        data = df_w |> filter(!is.na(log_transit_cap),
+                              !is.na(log_pop_density), !is.na(unemp_rate)))
+}
+
+# Three windows on each tier. ±5 is the baseline already in the panel.
+windows_for <- function(flag) {
+  d <- panel |> filter(.data[[flag]])
+  list(`±3` = fit_modelA_window(d, -3, 3),
+       `±5` = fit_modelA(d),
+       `±7` = fit_modelA_window(d, -7, 7))
+}
+win_ext  <- windows_for("in_modelA_ext")
+win_hq   <- windows_for("in_modelA_hq")
+win_rest <- windows_for("in_modelA_rest")
+
+for (nm in c("EXT", "HQ", "REST")) {
+  w <- switch(nm, EXT = win_ext, HQ = win_hq, REST = win_rest)
+  print(etable(w[["±3"]], w[["±5"]], w[["±7"]],
+               headers = c("±3", "±5 (baseline)", "±7"),
+               title   = paste0("Model A event-window variation – ", nm, " sample"),
+               digits  = "r3", se.below = TRUE))
+}
+```
+
+```{r}
+#| label: 9-2-plot
+#| fig-cap: "Model A event-study at three window widths, by sample"
+#| fig-height: 4.5
+#| fig-width: 11
+es_windows <- bind_rows(
+  bind_rows(extract_es(win_ext[["±3"]],  "±3"),
+            extract_es(win_ext[["±5"]],  "±5 (baseline)"),
+            extract_es(win_ext[["±7"]],  "±7")) |> mutate(tier = "EXT"),
+  bind_rows(extract_es(win_hq[["±3"]],   "±3"),
+            extract_es(win_hq[["±5"]],   "±5 (baseline)"),
+            extract_es(win_hq[["±7"]],   "±7")) |> mutate(tier = "HQ"),
+  bind_rows(extract_es(win_rest[["±3"]], "±3"),
+            extract_es(win_rest[["±5"]], "±5 (baseline)"),
+            extract_es(win_rest[["±7"]], "±7")) |> mutate(tier = "REST")
+) |>
+  mutate(tier = factor(tier, levels = c("EXT", "HQ", "REST")))
+
+ggplot(es_windows, aes(x = et, y = est, color = spec, fill = spec)) +
+  geom_hline(yintercept = 0, color = "grey50") +
+  geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey40") +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.2,
+                position = position_dodge(width = 0.4)) +
+  geom_point(size = 2.5, position = position_dodge(width = 0.4)) +
+  facet_wrap(~ tier, scales = "free_y") +
+  scale_x_continuous(breaks = -7:7) +
+  labs(title = "Model A – event-window robustness",
+       subtitle = "Coefficients on event-time dummies; reference = -1.",
+       x = "Event time (years from first successful recall)",
+       y = "Coefficient on log(transit capital + 1)",
+       color = "Window", fill = "Window")
+
+ggsave(here("output", "figures", "fig_robust_windows_A.png"),
+       width = 11, height = 4.5, dpi = 150)
+```
+
+The end-period-width table (below) reports the restricted-sample recall-year
+(t=0) and event-year-2 coefficients at each width. Interior event-times only.
+
+```{r}
+#| label: tab-robust-A
+cellA <- function(m, pat) {
+  ct <- summary(m)$coeftable; r <- grep(pat, rownames(ct))
+  if (length(r)) sprintf("%.3f (%.3f)", ct[r[1], 1], ct[r[1], 2]) else NA_character_
+}
+rowA <- function(m, lbl) tibble(
+  `End-period width`  = lbl,
+  `Recall year (t=0)` = cellA(m, "et_for_reg::0$"),
+  `Event-year 2`      = cellA(m, "et_for_reg::2$"))
+
+robust_A <- bind_rows(
+  rowA(win_rest[["±5"]], "5 years (baseline)"),
+  rowA(win_rest[["±3"]], "3 years"),
+  rowA(win_rest[["±7"]], "7 years"))
+
+capA_title <- "Model A end-period-width robustness, restricted sample"
+capA_note  <- paste(
+  "Event-study coefficients on log(transit capital + 1), city-clustered standard",
+  "errors in parentheses, as the end-period width (the cutoff beyond which distant",
+  "event-years are pooled into the endpoint indicators) is set to 3, 5 (baseline),",
+  "and 7 years.")
+
+writeLines(
+  as.character(
+    kbl(robust_A, format = "latex", booktabs = TRUE, caption = capA_title) |>
+      footnote(general = capA_note, general_title = "",
+               footnote_as_chunk = TRUE, threeparttable = TRUE, escape = FALSE)),
+  here("output", "tables", "tab_robust_modelA.tex"))
+
+robust_A |>
+  kable(caption = capA_title) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  footnote(general = capA_note, general_title = "", footnote_as_chunk = TRUE)
+```
+
+---
+
+## Alternative DV: operating expenses
+
+Re-fit the headline specs with operating expenses (`log_transit_op`) as the
+dependent variable, on all three samples. This tests whether recall activity
+moves the short-term operating budget rather than the capital budget. Model A
+reports the t=0 event-study coefficient; Model B is the COVID-interaction spec.
+
+```{r}
+#| label: 9-4-alt-dv-fits
+fit_modelA_dv <- function(df, dv) {
+  fml <- as.formula(sprintf(
+    "%s ~ i(et_for_reg, ref = -1) + log_pop_density + unemp_rate | agency_city + year",
+    dv))
+  feols(fml, cluster = ~ city_id,
+        data = df |> filter(!is.na(.data[[dv]]),
+                            !is.na(log_pop_density), !is.na(unemp_rate)))
+}
+
+fit_modelB_covid_dv <- function(df, dv) {
+  fml <- as.formula(sprintf(
+    "%s ~ any_petition_this_year * covid_period + log_pop_density + unemp_rate | agency_city + year",
+    dv))
+  feols(fml, cluster = ~ city_id,
+        data = df |> filter(!is.na(.data[[dv]]),
+                            !is.na(log_pop_density), !is.na(unemp_rate)))
+}
+
+etable(fit_modelA_dv(panel |> filter(in_modelA_ext),  "log_transit_op"),
+       fit_modelA_dv(panel |> filter(in_modelA_hq),   "log_transit_op"),
+       fit_modelA_dv(panel |> filter(in_modelA_rest), "log_transit_op"),
+       headers = c("EXT", "HQ", "REST"),
+       title   = "Alt DV log(operating + 1) – Model A event-study, by sample",
+       digits  = "r3", se.below = TRUE)
+
+etable(fit_modelB_covid_dv(panel |> filter(in_modelB_ext),  "log_transit_op"),
+       fit_modelB_covid_dv(panel |> filter(in_modelB_hq),   "log_transit_op"),
+       fit_modelB_covid_dv(panel |> filter(in_modelB_rest), "log_transit_op"),
+       headers = c("EXT", "HQ", "REST"),
+       title   = "Alt DV log(operating + 1) – Model B (COVID interaction), by sample",
+       digits  = "r3", se.below = TRUE)
+```
+
+Operating expenses as an alternative outcome, restricted sample, reported as a
+full table for each model in parallel with the main results tables: the Model A
+event-study, and the Model B petition DiD (baseline and COVID interaction), both
+on operating spending.
+
+```{r}
+#| label: tab-robust-operating-A
+op_A_rest <- fit_modelA_dv(panel |> filter(in_modelA_rest), "log_transit_op")
+
+et_terms_op <- grep("^et_for_reg::", names(coef(op_A_rest)), value = TRUE)
+et_terms_op <- et_terms_op[order(as.integer(str_extract(et_terms_op, "-?\\d+")))]
+coef_map_op_A <- c(setNames(sub("et_for_reg::", "t = ", et_terms_op), et_terms_op),
+                   "log_pop_density" = "log(pop density)",
+                   "unemp_rate"      = "Unemployment rate")
+
+modelsummary::modelsummary(
+  list("Operating expenses" = op_A_rest),
+  output   = here("output", "tables", "tab_robust_operating_A.tex"),
+  stars    = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  coef_map = coef_map_op_A,
+  gof_omit = "AIC|BIC|RMSE|Log.Lik",
+  title    = "Model A robustness: operating expenses as the outcome (restricted sample)",
+  notes    = list(
+    "Event-study coefficients on log(transit operating + 1). Reference period t = -1. Distant event-years are pooled into the endpoint indicators.",
+    "Agency-city and year fixed effects. Standard errors clustered by city."))
+cat("Wrote LaTeX Model A operating table to output/tables/tab_robust_operating_A.tex\n")
+
+modelsummary::modelsummary(
+  list("Operating expenses" = op_A_rest), output = "data.frame",
+  stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  coef_map = coef_map_op_A, gof_omit = "AIC|BIC|RMSE|Log.Lik") |>
+  mutate(term = if_else(statistic == "std.error", "", term)) |>
+  select(` ` = term, `Operating expenses`) |>
+  kable(caption = "Model A operating-expenses event-study (restricted sample)") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r}
+#| label: tab-robust-operating-B
+fit_modelB_static_dv <- function(df, dv) {
+  feols(as.formula(sprintf(
+    "%s ~ any_petition_this_year + log_pop_density + unemp_rate | agency_city + year", dv)),
+    cluster = ~ city_id,
+    data = df |> filter(!is.na(.data[[dv]]), !is.na(log_pop_density), !is.na(unemp_rate)))
+}
+op_B_rest <- list(
+  "Baseline" = fit_modelB_static_dv(panel |> filter(in_modelB_rest), "log_transit_op"),
+  "× COVID"  = fit_modelB_covid_dv(panel  |> filter(in_modelB_rest), "log_transit_op"))
+
+covid_term_op <- grep(":covid_period", names(coef(op_B_rest[[2]])), value = TRUE)[1]
+coef_map_op_B <- c(
+  "any_petition_this_yearTRUE" = "Petition filed",
+  setNames("Petition × COVID", covid_term_op),
+  "log_pop_density"            = "log(pop density)",
+  "unemp_rate"                 = "Unemployment rate")
+
+modelsummary::modelsummary(
+  op_B_rest,
+  output   = here("output", "tables", "tab_robust_operating_B.tex"),
+  stars    = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  coef_map = coef_map_op_B,
+  gof_omit = "AIC|BIC|RMSE|Log.Lik",
+  title    = "Model B robustness: operating expenses as the outcome (restricted sample)",
+  notes    = list(
+    "Coefficients on log(transit operating + 1). Petition filed = 1 in a petition-filing year.",
+    "The second column interacts petition with a 2020-2021 indicator.",
+    "Agency-city and year fixed effects. Standard errors clustered by city."))
+cat("Wrote LaTeX Model B operating table to output/tables/tab_robust_operating_B.tex\n")
+
+modelsummary::modelsummary(
+  op_B_rest, output = "data.frame",
+  stars = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  coef_map = coef_map_op_B, gof_omit = "AIC|BIC|RMSE|Log.Lik") |>
+  mutate(term = if_else(statistic == "std.error", "", term)) |>
+  select(` ` = term, Baseline, `× COVID`) |>
+  kable(caption = "Model B operating-expenses petition DiD (restricted sample)") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## Local-government hard filter
+
+Re-fits the headline specs after dropping all agency-city rows where the agency
+is not controlled by a general-purpose local government (`local_controlled ==
+FALSE`). Keeps only the "City, County or Local Government Unit or DOT" category;
+drops Independent Public Agencies, State DOTs, MPOs, Tribes, private providers,
+universities, and non-profits.
+
+```{r}
+#| label: 9-5-prep
+panel_local <- panel |> filter(local_controlled)
+cat(sprintf("Locally-controlled-only panel: %d rows / %d cities (vs full %d / %d)\n",
+            nrow(panel_local), n_distinct(panel_local$city_id),
+            nrow(panel), n_distinct(panel$city_id)))
+
+panel |> distinct(ntd_id, local_controlled) |>
+  count(local_controlled) |>
+  kable(caption = "Agencies by local_controlled flag") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r}
+#| label: 9-5-fits
+etable(fit_modelA(panel_local |> filter(in_modelA_ext)),
+       fit_modelA(panel_local |> filter(in_modelA_hq)),
+       fit_modelA(panel_local |> filter(in_modelA_rest)),
+       headers = c("EXT", "HQ", "REST"),
+       title   = "Local-government hard filter – Model A event-study, by sample",
+       digits  = "r3", se.below = TRUE)
+
+etable(fit_modelB_covid(panel_local |> filter(in_modelB_ext)),
+       fit_modelB_covid(panel_local |> filter(in_modelB_hq)),
+       fit_modelB_covid(panel_local |> filter(in_modelB_rest)),
+       headers = c("EXT", "HQ", "REST"),
+       title   = "Local-government hard filter – Model B (COVID interaction), by sample",
+       digits  = "r3", se.below = TRUE)
+```
+
+The local-government table reports the restricted-sample non-COVID petition
+coefficient under the local-government subset, against the baseline. The cities
+column reports the number of cities remaining under each restriction.
+
+```{r}
+#| label: tab-robust-B
+rest_B <- panel |> filter(in_modelB_rest)
+
+petB <- function(m) {
+  ct <- summary(m)$coeftable
+  r  <- grep("^any_petition_this_year(?:TRUE)?$", rownames(ct), perl = TRUE)
+  sprintf("%.3f (%.3f)", ct[r[1], 1], ct[r[1], 2])
+}
+nC <- function(df) df |>
+  filter(!is.na(log_transit_cap), !is.na(log_pop_density), !is.na(unemp_rate)) |>
+  pull(city_id) |> n_distinct()
+
+robust_B <- tibble(
+  Specification = c("Baseline (restricted sample)",
+                    "Local-government agencies only"),
+  `Petition (non-COVID)` = c(
+    petB(fit_modelB_covid(rest_B)),
+    petB(fit_modelB_covid(rest_B |> filter(local_controlled)))),
+  Cities = c(nC(rest_B), nC(rest_B |> filter(local_controlled))))
+
+capB_title <- "Model B local-government robustness, restricted sample"
+capB_note  <- paste(
+  "Non-COVID petition coefficient (the petition main effect in the",
+  "COVID-interaction specification) on log(transit capital + 1), city-clustered",
+  "standard errors in parentheses. The second row keeps only agencies that are an",
+  "arm of a local government.")
+
+writeLines(
+  as.character(
+    kbl(robust_B, format = "latex", booktabs = TRUE, caption = capB_title) |>
+      footnote(general = capB_note, general_title = "",
+               footnote_as_chunk = TRUE, threeparttable = TRUE, escape = FALSE)),
+  here("output", "tables", "tab_robust_modelB.tex"))
+
+robust_B |>
+  kable(caption = capB_title) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  footnote(general = capB_note, general_title = "", footnote_as_chunk = TRUE)
+```
+

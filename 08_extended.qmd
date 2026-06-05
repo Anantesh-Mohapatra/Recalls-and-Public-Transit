@@ -1,0 +1,504 @@
+---
+title: "Stage 8: Extended models"
+execute:
+  cache: false
+---
+
+```{r}
+#| label: purpose
+#| include: false
+# =============================================================================
+# Purpose : Extensions to the headline models.
+#   8d. Extended-coverage Model A – event-study on the in_modelA_ext sample
+#       (HQ ∪ SA-place ∪ SA-county matched (city, agency) pairs).
+#   8e. Extended-coverage Model B on in_modelB_ext: baseline and × covid_period.
+#   8f. Restricted-coverage Model A on in_modelA_rest (HQ ∩ area-served pairs):
+#       no-controls and with-controls.
+#   8g. Restricted-coverage Model B on in_modelB_rest: no-controls,
+#       with-controls, and × covid_period.
+# All specs use the agency-city-year panel: FE | agency_city + year |, cluster
+# on city_id.
+# =============================================================================
+```
+
+## Setup
+
+```{r}
+#| label: setup
+library(tidyverse)
+library(fixest)
+library(kableExtra)
+library(here)
+here::i_am("_quarto.yml")
+source(here("R", "model_helpers.R"))
+
+panel <- readRDS(here("data", "final", "panel.rds"))
+
+dir.create(here("output", "tables"),  recursive = TRUE, showWarnings = FALSE)
+dir.create(here("output", "figures"), recursive = TRUE, showWarnings = FALSE)
+
+theme_set(theme_minimal(base_size = 12) +
+          theme(plot.title = element_text(face = "bold"),
+                plot.subtitle = element_text(color = "grey40")))
+
+setFixest_dict(c(
+  log_transit_cap          = "log(transit capital + 1)",
+  log_pop_density          = "log(pop density)",
+  unemp_rate               = "Unemployment rate (%)",
+  any_petition_this_year   = "Petition (any)",
+  agency_city              = "Agency-City",
+  year                     = "Year"
+))
+```
+
+---
+
+## Extended-coverage Model A
+
+Same event-study spec as the headline on the extended-coverage sample (`in_modelA_ext`),
+which includes (city, agency) pairs matched via SA-place or SA-county in
+addition to HQ.
+
+```{r}
+#| label: 8d-fit
+mA_ext <- fit_modelA(panel |> filter(in_modelA_ext))
+
+etable(mA_ext,
+       title  = "Model A – extended-coverage sample",
+       digits = "r3", se.below = TRUE)
+```
+
+```{r}
+#| label: 8d-plot
+#| fig-cap: "Model A event-study coefficients with 95% CIs – extended sample (ref: t = -1)"
+#| fig-height: 4.5
+es_ext <- extract_es(mA_ext)
+ggplot(es_ext, aes(x = et, y = est)) +
+  geom_hline(yintercept = 0, color = "grey50") +
+  geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey40") +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.2, color = "#16a085") +
+  geom_point(size = 2.5, color = "#16a085") +
+  scale_x_continuous(breaks = -5:5,
+                     labels = function(x) ifelse(x == 0, "Recall\nyear",
+                                                  as.character(x))) +
+  labs(title = "Model A – extended-coverage event-study",
+       subtitle = "Agency-city + year FE. SE clustered by city. 95% CIs. Reference t = -1. Endpoints binned at ±5.",
+       x = "Event time (years from first successful recall)",
+       y = "Coefficient on log(transit capital + 1)")
+ggsave(here("output", "figures", "fig_eventstudy_A_extended.png"),
+       width = 9, height = 4.5, dpi = 150)
+```
+
+```{r}
+#| label: 8d-sample-stats
+panel |>
+  filter(in_modelA_ext) |>
+  summarise(
+    rows         = n(),
+    cities       = n_distinct(city_id),
+    treated_cities = n_distinct(city_id[group_A == "treated"]),
+    control_cities = n_distinct(city_id[group_A == "control"]),
+    agency_city_pairs = n_distinct(agency_city)
+  ) |>
+  kable(caption = "Extended-coverage Model A sample composition") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## Extended-coverage Model B
+
+Same specs as the headline Model B on the extended-coverage sample
+(`in_modelB_ext`): baseline and `× covid_period`.
+
+```{r}
+#| label: 8e-fit
+dat_mB_ext   <- panel |> filter(in_modelB_ext, !is.na(log_transit_cap),
+                                !is.na(log_pop_density), !is.na(unemp_rate))
+mB_ext       <- fit_modelB_static(dat_mB_ext)
+mB_ext_covid <- fit_modelB_covid(dat_mB_ext)
+
+etable(mB_ext, mB_ext_covid,
+       headers = c("Ext", "Ext × COVID"),
+       title   = "Model B – extended-coverage sample",
+       digits  = "r3", se.below = TRUE)
+```
+
+```{r}
+#| label: 8e-sample-stats
+dat_mB_ext |>
+  summarise(
+    rows              = n(),
+    cities            = n_distinct(city_id),
+    agency_city_pairs = n_distinct(agency_city)
+  ) |>
+  kable(caption = "Extended-coverage Model B regression sample") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## Restricted-coverage Model A
+
+Restricted sample (`in_modelA_rest`): (city, agency) pairs that are both
+HQ-matched and listed in the FTA RY2024 service-area data (SA-place or
+SA-county).
+
+```{r}
+#| label: 8f-fit
+dat_mA_rest     <- panel |> filter(in_modelA_rest, !is.na(log_transit_cap))
+dat_mA_rest_ctl <- dat_mA_rest |>
+  filter(!is.na(log_pop_density), !is.na(unemp_rate))
+
+mA_rest_nc <- feols(
+  log_transit_cap ~ i(et_for_reg, ref = -1)
+  | agency_city + year, cluster = ~ city_id, data = dat_mA_rest)
+
+mA_rest <- fit_modelA(dat_mA_rest_ctl)
+
+etable(mA_rest_nc, mA_rest,
+       headers = c("No ctrl", "Baseline"),
+       title   = "Model A – restricted-coverage sample (HQ ∩ area-served)",
+       digits  = "r3", se.below = TRUE)
+```
+
+```{r}
+#| label: 8f-plot
+#| fig-cap: "Model A event-study coefficients with 95% CIs – restricted sample (ref: t = -1)"
+#| fig-height: 4.5
+es_rest <- extract_es(mA_rest)
+ggplot(es_rest, aes(x = et, y = est)) +
+  geom_hline(yintercept = 0, color = "grey50") +
+  geom_vline(xintercept = -0.5, linetype = "dashed", color = "grey40") +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.2, color = "#8e44ad") +
+  geom_point(size = 2.5, color = "#8e44ad") +
+  scale_x_continuous(breaks = -5:5,
+                     labels = function(x) ifelse(x == 0, "Recall\nyear",
+                                                  as.character(x))) +
+  labs(title = "Model A – restricted-coverage event-study",
+       subtitle = "Agency-city + year FE. SE clustered by city. 95% CIs. Reference t = -1. Endpoints binned at ±5.",
+       x = "Event time (years from first successful recall)",
+       y = "Coefficient on log(transit capital + 1)")
+ggsave(here("output", "figures", "fig_eventstudy_A_restricted.png"),
+       width = 9, height = 4.5, dpi = 150)
+```
+
+```{r}
+#| label: 8f-sample-stats
+dat_mA_rest_ctl |>
+  summarise(
+    rows              = n(),
+    cities            = n_distinct(city_id),
+    treated_cities    = n_distinct(city_id[group_A == "treated"]),
+    control_cities    = n_distinct(city_id[group_A == "control"]),
+    agency_city_pairs = n_distinct(agency_city)
+  ) |>
+  kable(caption = "Restricted-coverage Model A sample composition (controlled spec)") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## Restricted-coverage Model B
+
+Same restricted sample applied to Model B (`in_modelB_rest`): no-controls,
+with-controls, and `× covid_period` variants.
+
+```{r}
+#| label: 8g-fit
+dat_mB_rest     <- panel |> filter(in_modelB_rest, !is.na(log_transit_cap))
+dat_mB_rest_ctl <- dat_mB_rest |>
+  filter(!is.na(log_pop_density), !is.na(unemp_rate))
+
+mB_rest_nc <- feols(
+  log_transit_cap ~ any_petition_this_year
+  | agency_city + year, cluster = ~ city_id, data = dat_mB_rest)
+
+mB_rest       <- fit_modelB_static(dat_mB_rest_ctl)
+mB_rest_covid <- fit_modelB_covid(dat_mB_rest_ctl)
+
+etable(mB_rest_nc, mB_rest, mB_rest_covid,
+       headers = c("No ctrl", "Baseline", "× COVID"),
+       title   = "Model B – restricted-coverage sample (HQ ∩ area-served)",
+       digits  = "r3", se.below = TRUE)
+```
+
+```{r}
+#| label: 8g-sample-stats
+dat_mB_rest_ctl |>
+  summarise(
+    rows              = n(),
+    cities            = n_distinct(city_id),
+    agency_city_pairs = n_distinct(agency_city)
+  ) |>
+  kable(caption = "Restricted-coverage Model B regression sample") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## Headline summary
+
+```{r}
+#| label: tab-headline
+bind_rows(
+  extract_one(mA_ext,       "Model A extended (t=0)",
+              RECALL_T0_PAT, "Recall (t=0)"),
+  extract_one(mB_ext,       "Model B extended",
+              PETITION_PAT,  "Petition"),
+  extract_one(mB_ext_covid, "Model B ext × COVID",
+              PETITION_PAT,  "Petition (non-COVID)"),
+  extract_one(mB_ext_covid, "Model B ext × COVID",
+              COVID_INT_PAT, "Petition × COVID"),
+  extract_one(mA_rest,        "Model A restricted (t=0)",
+              RECALL_T0_PAT, "Recall (t=0)"),
+  extract_one(mB_rest_nc,     "Model B restricted (no ctrl)",
+              PETITION_PAT,  "Petition"),
+  extract_one(mB_rest,        "Model B restricted",
+              PETITION_PAT,  "Petition"),
+  extract_one(mB_rest_covid,  "Model B restricted × COVID",
+              PETITION_PAT,  "Petition (non-COVID)"),
+  extract_one(mB_rest_covid,  "Model B restricted × COVID",
+              COVID_INT_PAT, "Petition × COVID")
+) |>
+  mutate(`95% CI` = sprintf("[%.3f, %.3f]", est - 1.96 * se, est + 1.96 * se),
+         across(c(est, se, p), ~ round(.x, 3))) |>
+  select(spec, term, est, se, `95% CI`, p) |>
+  kable(caption = "Headline coefficients") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## Model A coverage cascade (combined table)
+
+The same `fit_modelA` event-study estimated on each of the three coverage tiers, written as a single LaTeX table (one column per sample) for the thesis.
+
+```{r}
+#| label: 8h-modelA-cascade
+mods_A <- list(
+  "EXT"  = fit_modelA(panel |> filter(in_modelA_ext)),
+  "HQ"   = fit_modelA(panel |> filter(in_modelA_hq)),
+  "REST" = mA_rest
+)
+
+# Order the event-time terms across all three fits, then append the controls.
+et_terms <- mods_A |>
+  lapply(\(m) grep("^et_for_reg::", names(coef(m)), value = TRUE)) |>
+  unlist() |> unique()
+et_terms <- et_terms[order(as.integer(str_extract(et_terms, "-?\\d+")))]
+
+coef_map_A <- c(setNames(sub("et_for_reg::", "t = ", et_terms), et_terms),
+                "log_pop_density" = "log(pop density)",
+                "unemp_rate"      = "Unemployment rate")
+
+# On-screen HTML view: pull modelsummary's formatted numbers as a data frame
+# and render with kable, so the column headers stay clean.
+modelsummary::modelsummary(
+  mods_A,
+  output   = "data.frame",
+  stars    = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  coef_map = coef_map_A,
+  gof_omit = "AIC|BIC|RMSE|Log.Lik"
+) |>
+  mutate(term = if_else(statistic == "std.error", "", term)) |>
+  select(` ` = term, EXT, HQ, REST) |>
+  kable(caption = "Model A event-study across coverage tiers (EXT / HQ / REST)") |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r}
+#| label: 8h-modelA-cascade-tex
+modelsummary::modelsummary(
+  mods_A,
+  output   = here("output", "tables", "modelA_cascade.tex"),
+  stars    = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  coef_map = coef_map_A,
+  gof_omit = "AIC|BIC|RMSE|Log.Lik",
+  title    = "Model A event-study across coverage tiers",
+  notes    = list(
+    "Event-study coefficients on log(transit capital + 1). Reference period t = -1. Window endpoints are binned.",
+    "Agency-city and year fixed effects. Standard errors clustered by city.",
+    "EXT: agency matched by headquarters, service-area place, or service-area county. HQ: agency headquartered in the city. REST: agency both headquartered in and serving the city."
+  )
+)
+cat("Wrote LaTeX Model A cascade to output/tables/modelA_cascade.tex\n")
+```
+
+### Pre-trend joint Wald test by tier
+
+Joint F-test that the pre-period event-time coefficients (`et_for_reg::-2` and earlier) are zero, run separately on each coverage tier.
+
+```{r}
+#| label: 8h-modelA-pretrend
+pre_pat_A <- "^et_for_reg::-[2-9]|^et_for_reg::-[1-9][0-9]"
+imap(mods_A, \(m, nm) pretrend_wald(m, pre_pat_A, nm)) |>
+  list_rbind() |>
+  mutate(across(c(F_stat, p_value), ~ round(.x, 3))) |>
+  kable(caption = "Model A pre-trend joint Wald test by tier (H0: all pre-period coefs = 0)",
+        col.names = c("Sample", "Pre-period terms", "F", "p")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## Model B coverage cascade (combined table)
+
+The static petition DiD estimated on each of the three coverage tiers, written as a single table. Columns 1-3 are the baseline spec (petition dummy + controls); columns 4-6 add the COVID interaction so the petition effect can differ in 2020-2021.
+
+```{r}
+#| label: 8i-modelB-cascade-prep
+dat_mB_hq2 <- panel |> filter(in_modelB_hq, !is.na(log_transit_cap),
+                              !is.na(log_pop_density), !is.na(unemp_rate))
+
+mods_B <- list(
+  fit_modelB_static(dat_mB_ext),
+  fit_modelB_static(dat_mB_hq2),
+  fit_modelB_static(dat_mB_rest_ctl),
+  fit_modelB_covid(dat_mB_ext),
+  fit_modelB_covid(dat_mB_hq2),
+  fit_modelB_covid(dat_mB_rest_ctl)
+)
+names(mods_B) <- c("EXT", "HQ", "REST", "EXT ", "HQ ", "REST ")
+
+covid_term <- grep(":covid_period", names(coef(mods_B[[4]])), value = TRUE)[1]
+coef_map_B <- c(
+  "any_petition_this_yearTRUE" = "Petition filed",
+  setNames("Petition × COVID", covid_term),
+  "log_pop_density"            = "log(pop density)",
+  "unemp_rate"                 = "Unemployment rate"
+)
+```
+
+```{r}
+#| label: 8i-modelB-cascade
+ms_df <- modelsummary::modelsummary(
+  mods_B, output = "data.frame",
+  stars    = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  coef_map = coef_map_B,
+  gof_omit = "AIC|BIC|RMSE|Log.Lik")
+
+mod_cols <- tail(names(ms_df), 6)
+ms_df |>
+  mutate(term = if_else(statistic == "std.error", "", term)) |>
+  select(` ` = term, all_of(mod_cols)) |>
+  kable(caption = "Model B petition DiD across coverage tiers (EXT / HQ / REST)",
+        col.names = c(" ", "EXT", "HQ", "REST", "EXT", "HQ", "REST")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) |>
+  add_header_above(c(" " = 1, "Baseline" = 3, "× COVID (2020-21)" = 3))
+```
+
+```{r}
+#| label: 8i-modelB-cascade-tex
+tt <- modelsummary::modelsummary(
+  mods_B, output = "tinytable",
+  stars    = c("*" = 0.1, "**" = 0.05, "***" = 0.01),
+  coef_map = coef_map_B,
+  gof_omit = "AIC|BIC|RMSE|Log.Lik",
+  title    = "Model B petition DiD across coverage tiers",
+  notes    = list(
+    "Coefficients on log(transit capital + 1). Petition filed = 1 in a petition-filing year.",
+    "Columns 1-3: baseline. Columns 4-6: petition interacted with a 2020-2021 indicator.",
+    "Agency-city and year fixed effects. Standard errors clustered by city.",
+    "EXT: agency matched by headquarters, service-area place, or service-area county. HQ: agency headquartered in the city. REST: agency both headquartered in and serving the city."
+  )
+)
+tt <- tinytable::group_tt(tt, j = list("Baseline" = 2:4, "× COVID (2020-21)" = 5:7))
+tinytable::save_tt(tt, output = here("output", "tables", "modelB_cascade.tex"),
+                   overwrite = TRUE)
+cat("Wrote LaTeX Model B cascade to output/tables/modelB_cascade.tex\n")
+```
+
+---
+
+## Model B petition effect across tiers (figure)
+
+The petition effect outside COVID (the petition coefficient) and during COVID
+(petition + petition × COVID), with 95% CIs, for each coverage tier. The
+during-COVID effect is a linear combination of two coefficients: its estimate
+and SE come from `car::deltaMethod` and its p-value from `car::linearHypothesis`
+(a Wald test of `b1 + b2 = 0`), both using the model's clustered covariance. The
+companion table reports all six points so every plotted estimate, CI, and p is
+traceable.
+
+```{r}
+#| label: 8j-prep
+combo_effect <- function(m, tier) {
+  co <- coef(m); ct <- summary(m)$coeftable
+  b1 <- "any_petition_this_yearTRUE"
+  b2 <- grep(":covid_period", names(co), value = TRUE)[1]
+  # during-COVID effect (b1 + b2): estimate and SE from car::deltaMethod, p from
+  # car::linearHypothesis (Wald test of b1 + b2 = 0); both use the clustered vcov.
+  # outside-COVID is the native petition coefficient (matches the cascade table).
+  dm <- car::deltaMethod(m, paste0("`", b1, "` + `", b2, "`"))
+  hm <- setNames(rep(0, length(co)), names(co)); hm[c(b1, b2)] <- 1
+  lh <- car::linearHypothesis(m, matrix(hm, nrow = 1), rhs = 0)
+  tibble(tier   = tier,
+         period = c("Outside COVID", "During COVID (2020-21)"),
+         est    = c(ct[b1, 1], dm$Estimate),
+         se     = c(ct[b1, 2], dm$SE),
+         p      = c(ct[b1, 4], lh[2, grep("^Pr", names(lh))]))
+}
+
+es_B <- bind_rows(
+  combo_effect(fit_modelB_covid(dat_mB_ext),      "EXT"),
+  combo_effect(fit_modelB_covid(dat_mB_hq2),      "HQ"),
+  combo_effect(fit_modelB_covid(dat_mB_rest_ctl), "REST")
+) |>
+  mutate(lo = est - 1.96 * se, hi = est + 1.96 * se,
+         tier   = factor(tier, levels = c("EXT", "HQ", "REST")),
+         period = factor(period, levels = c("Outside COVID", "During COVID (2020-21)")))
+```
+
+```{r}
+#| label: 8j-modelB-plot
+#| fig-cap: "Model B petition effect by tier – outside vs during COVID (95% CIs, ref: no petition)"
+#| fig-height: 4.5
+ggplot(es_B, aes(x = est, y = fct_rev(tier), color = period)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  geom_pointrange(aes(xmin = lo, xmax = hi),
+                  position = position_dodge(width = 0.55), linewidth = 0.7) +
+  scale_color_manual(values = c("Outside COVID" = "#c0392b",
+                                "During COVID (2020-21)" = "#2980b9")) +
+  labs(title = "Model B – petition effect on transit capital by coverage tier",
+       subtitle = "Static petition DiD with COVID interaction. Points = effect, bars = 95% CIs.\nAgency-city + year FE. SE clustered by city.",
+       x = "Coefficient on log(transit capital + 1)", y = NULL, color = NULL) +
+  theme(legend.position = "bottom")
+
+ggsave(here("output", "figures", "fig_modelB_coef.png"),
+       width = 9, height = 4.5, dpi = 150)
+```
+
+```{r}
+#| label: 8j-modelB-margins-table
+margins_B <- es_B |>
+  arrange(tier, period) |>
+  transmute(Tier = as.character(tier),
+            Period = as.character(period),
+            Effect   = sprintf("%.3f", est),
+            SE       = sprintf("%.3f", se),
+            `95% CI` = sprintf("[%.3f, %.3f]", lo, hi),
+            p        = sprintf("%.3f", p))
+
+margins_B |>
+  kable(caption = paste0(
+    "Petition effect by period (data behind the figure). ",
+    "Outside COVID = the petition coefficient; during COVID = petition + ",
+    "petition x COVID, with SE combined via the fitted covariance. ",
+    "95% CI uses +/- 1.96 SE; during-COVID p from a linear-combination test.")) |>
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+tt_m <- tinytable::tt(
+  margins_B,
+  caption = "Model B petition effect by period and coverage tier",
+  notes   = list(
+    "Outside COVID = the petition coefficient (b1); during COVID = b1 + b2 (petition + petition x COVID).",
+    "During-COVID SE combines both terms via the fitted covariance. 95% CI uses +/- 1.96 SE.",
+    "Outside-COVID p is the petition coefficient's p; during-COVID p is a delta-method linear-combination test of b1 + b2 = 0.",
+    "From the COVID-interaction spec on each tier: agency-city and year fixed effects, SE clustered by city."
+  ))
+tinytable::save_tt(tt_m, output = here("output", "tables", "modelB_margins.tex"),
+                   overwrite = TRUE)
+cat("Wrote LaTeX Model B margins to output/tables/modelB_margins.tex\n")
+```
+
